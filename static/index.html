@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#101827">
+  <title>API Vulnerability Checker</title>
+  <link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="/" aria-label="API Checker home"><span class="brand-mark">A</span><span>API Checker</span></a>
+    <div class="top-meta"><span class="live-dot"></span> Local scan workspace <a href="/docs">API docs</a></div>
+  </header>
+
+  <main class="layout">
+    <section class="intro">
+      <div class="eyebrow">OPENAPI SECURITY REVIEW</div>
+      <h1>Find the risks hiding<br>in your API contract.</h1>
+      <p>Review an OpenAPI or Swagger definition for common security signals. Your uploaded specification stays on this machine.</p>
+      <div class="notice"><span class="notice-icon">i</span><span><strong>Specification only.</strong> This version does not send requests to the target API. Findings are review signals, not proof of a live vulnerability.</span></div>
+      <div class="mini-stats"><div><strong>4</strong><span>checks included</span></div><div><strong>2 MB</strong><span>maximum spec size</span></div><div><strong>0</strong><span>target requests sent</span></div></div>
+    </section>
+
+    <section class="panel scan-panel" aria-labelledby="scan-title">
+      <div class="panel-head"><div><div class="eyebrow">NEW REVIEW</div><h2 id="scan-title">Start a scan</h2></div><span class="step-badge">01 / SPEC</span></div>
+      <form id="scan-form">
+        <label for="scan-name">Scan name <span class="optional">optional</span></label>
+        <input id="scan-name" name="name" maxlength="120" placeholder="e.g. Payments API review">
+
+        <label for="target-url">API base URL</label>
+        <input id="target-url" name="target_url" type="url" required placeholder="https://api.example.com">
+        <p class="field-help">Saved with the report for reference. This build will not connect to it.</p>
+
+        <label for="spec-file">OpenAPI / Swagger file</label>
+        <label class="file-drop" for="spec-file" id="file-drop">
+          <span class="upload-icon">↑</span>
+          <span class="file-copy"><strong id="file-label">Choose a JSON or YAML file</strong><small>OpenAPI 3.x or Swagger 2.0 · up to 2 MB</small></span>
+          <span class="browse">Browse</span>
+        </label>
+        <input id="spec-file" name="spec_file" type="file" accept=".json,.yaml,.yml,application/json,text/yaml" required hidden>
+        <div id="form-error" class="form-error" role="alert" hidden></div>
+        <button id="submit-button" class="primary-button" type="submit"><span>Analyze specification</span><span aria-hidden="true">→</span></button>
+      </form>
+      <div class="privacy-note"><span>⌑</span> Runs locally · No API credentials needed · No network probes</div>
+    </section>
+
+    <section id="result-section" class="panel results-panel" hidden aria-live="polite">
+      <div class="panel-head"><div><div class="eyebrow">SCAN REPORT</div><h2 id="result-title">Results</h2></div><span id="status-badge" class="status-badge">Queued</span></div>
+      <div id="scan-summary" class="summary-grid"></div>
+      <div id="scan-message" class="scan-message"></div>
+      <div id="findings-list" class="findings-list"></div>
+    </section>
+
+    <section class="history-section">
+      <div class="history-heading"><div><div class="eyebrow">LOCAL HISTORY</div><h2>Recent scans</h2></div><button id="refresh-button" class="text-button" type="button">Refresh ↻</button></div>
+      <div id="history-list" class="history-list"><div class="empty-state">Your completed scan reports will appear here.</div></div>
+    </section>
+    <footer>API Checker <span>·</span> v0.1.0 <span>·</span> Offline specification analysis</footer>
+  </main>
+  <script src="/static/app.js" defer></script>
+</body>
+</html>
