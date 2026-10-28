@@ -45,7 +45,7 @@ Upload [`examples/sample-openapi.yaml`](examples/sample-openapi.yaml) from the U
 - `GET /api/v1/scans?limit=50` — list recent scans.
 - `GET /api/v1/scans/{id}` — read scan status, summary, and findings.
 
-Uploads are limited to 2 MB and 2,000 operations. JSON and YAML are parsed locally. The original specification is removed from the database when analysis completes; findings and scan metadata remain in `data/scanner.sqlite3`. The `data/` folder is ignored by Git.
+Uploads are limited to 2 MB and 2,000 operations, including OpenAPI 3.1+ webhooks. JSON and YAML are parsed locally; duplicate object keys and missing required top-level metadata are rejected. The parser performs structural checks, not full OpenAPI schema validation. The original specification is removed from the database when analysis completes; findings and scan metadata remain in `data/scanner.sqlite3`. The `data/` folder is ignored by Git.
 
 To store the SQLite file elsewhere, set `API_VULN_DB` before starting the server, for example:
 

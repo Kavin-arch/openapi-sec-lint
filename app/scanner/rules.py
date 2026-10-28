@@ -3,6 +3,7 @@ import re
 from typing import Any
 
 from app.scanner.models import Finding
+from app.scanner.references import resolve_local_ref
 
 HTTP_METHODS = ("get", "post", "put", "patch", "delete", "options", "head", "trace")
 SENSITIVE_NAMES = {
@@ -11,14 +12,36 @@ SENSITIVE_NAMES = {
 }
 
 
-def operations(spec: dict[str, Any]) -> Iterator[tuple[str, str, dict[str, Any]]]:
-    for path, path_item in spec.get("paths", {}).items():
-        if not isinstance(path_item, dict):
+def _operation_entries(
+    spec: dict[str, Any],
+) -> Iterator[tuple[str, str, dict[str, Any], dict[str, Any]]]:
+    collections = [("paths", spec.get("paths", {}))]
+    version = spec.get("openapi")
+    try:
+        supports_webhooks = isinstance(version, str) and tuple(
+            int(part) for part in version.split(".")[:2]
+        ) >= (3, 1)
+    except ValueError:
+        supports_webhooks = False
+    if supports_webhooks:
+        collections.append(("webhooks", spec.get("webhooks", {})))
+    for collection_name, items in collections:
+        if not isinstance(items, dict):
             continue
-        for method in HTTP_METHODS:
-            operation = path_item.get(method)
-            if isinstance(operation, dict):
-                yield method.upper(), str(path), operation
+        for path, raw_path_item in items.items():
+            path_item = resolve_local_ref(spec, raw_path_item)
+            if not isinstance(path_item, dict):
+                continue
+            path_label = str(path) if collection_name == "paths" else f"webhook:{path}"
+            for method in HTTP_METHODS:
+                operation = path_item.get(method)
+                if isinstance(operation, dict):
+                    yield method.upper(), path_label, path_item, operation
+
+
+def operations(spec: dict[str, Any]) -> Iterator[tuple[str, str, dict[str, Any]]]:
+    for method, path, _, operation in _operation_entries(spec):
+        yield method, path, operation
 
 
 def _operation_name(method: str, path: str) -> str:
@@ -30,7 +53,12 @@ def _check_auth(spec: dict[str, Any]) -> list[Finding]:
     global_security = spec.get("security")
     for method, path, operation in operations(spec):
         requirements = operation["security"] if "security" in operation else global_security
-        if not requirements:
+        # Security Requirement Objects are alternatives (OR). An empty object
+        # is an explicit anonymous alternative, so authentication is optional.
+        if not isinstance(requirements, list) or not requirements or any(
+            not isinstance(requirement, dict) or not requirement
+            for requirement in requirements
+        ):
             missing.append(_operation_name(method, path))
     if not missing:
         return []
@@ -52,9 +80,39 @@ def _check_auth(spec: dict[str, Any]) -> list[Finding]:
 
 def _check_transport(spec: dict[str, Any]) -> list[Finding]:
     insecure_urls: list[str] = []
-    for server in spec.get("servers", []) if isinstance(spec.get("servers", []), list) else []:
-        if isinstance(server, dict) and isinstance(server.get("url"), str) and server["url"].lower().startswith("http://"):
-            insecure_urls.append(server["url"])
+
+    def collect_servers(servers: Any) -> None:
+        if not isinstance(servers, list):
+            return
+        for server in servers:
+            if (
+                isinstance(server, dict)
+                and isinstance(server.get("url"), str)
+                and server["url"].lower().startswith("http://")
+            ):
+                insecure_urls.append(server["url"])
+
+    collect_servers(spec.get("servers", []))
+    collections = ["paths"]
+    version = spec.get("openapi")
+    try:
+        if isinstance(version, str) and tuple(int(part) for part in version.split(".")[:2]) >= (3, 1):
+            collections.append("webhooks")
+    except ValueError:
+        pass
+    for collection_name in collections:
+        items = spec.get(collection_name, {})
+        if not isinstance(items, dict):
+            continue
+        for raw_path_item in items.values():
+            path_item = resolve_local_ref(spec, raw_path_item)
+            if not isinstance(path_item, dict):
+                continue
+            collect_servers(path_item.get("servers", []))
+            for method in HTTP_METHODS:
+                operation = path_item.get(method)
+                if isinstance(operation, dict):
+                    collect_servers(operation.get("servers", []))
 
     # Swagger 2.0 stores schemes and host/basePath separately.
     if spec.get("swagger") == "2.0":
@@ -76,33 +134,12 @@ def _check_transport(spec: dict[str, Any]) -> list[Finding]:
     )]
 
 
-def _resolve_local_ref(spec: dict[str, Any], value: Any) -> Any:
-    """Resolve internal JSON Pointers without fetching external references."""
-    visited: set[int] = set()
-    while isinstance(value, dict) and isinstance(value.get("$ref"), str):
-        reference = value["$ref"]
-        if not reference.startswith("#/"):
-            return value
-        target: Any = spec
-        try:
-            for token in reference[2:].split("/"):
-                token = token.replace("~1", "/").replace("~0", "~")
-                target = target[int(token)] if isinstance(target, list) else target[token]
-        except (KeyError, IndexError, ValueError, TypeError):
-            return value
-        if not isinstance(target, (dict, list)) or id(target) in visited:
-            return target
-        visited.add(id(target))
-        value = target
-    return value
-
-
 def _walk_schema(
     spec: dict[str, Any], schema: Any, trail: str = "", depth: int = 0,
     seen: set[int] | None = None,
 ) -> Iterator[tuple[str, dict[str, Any]]]:
-    schema = _resolve_local_ref(spec, schema)
-    if depth > 12 or not isinstance(schema, dict):
+    schema = resolve_local_ref(spec, schema)
+    if depth > 64 or not isinstance(schema, dict):
         return
     seen = seen if seen is not None else set()
     identity = id(schema)
@@ -116,15 +153,32 @@ def _walk_schema(
         if isinstance(properties, dict):
             for name, child in properties.items():
                 yield from _walk_schema(spec, child, f"{trail}.{name}" if trail else str(name), depth + 1, seen)
-        for keyword in ("items", "additionalProperties"):
+        for keyword in (
+            "items", "additionalProperties", "contains", "not", "if", "then",
+            "else", "propertyNames", "unevaluatedItems", "unevaluatedProperties",
+        ):
             child = schema.get(keyword)
             if isinstance(child, dict):
                 yield from _walk_schema(spec, child, f"{trail}.{keyword}" if trail else keyword, depth + 1, seen)
-        for keyword in ("allOf", "oneOf", "anyOf"):
+            elif keyword == "items" and isinstance(child, list):
+                for index, item in enumerate(child):
+                    yield from _walk_schema(
+                        spec, item, f"{trail}.items[{index}]" if trail else f"items[{index}]",
+                        depth + 1, seen,
+                    )
+        for keyword in ("allOf", "oneOf", "anyOf", "prefixItems"):
             children = schema.get(keyword)
             if isinstance(children, list):
                 for index, child in enumerate(children):
                     yield from _walk_schema(spec, child, f"{trail}.{keyword}[{index}]", depth + 1, seen)
+        for keyword in ("patternProperties", "dependentSchemas"):
+            children = schema.get(keyword)
+            if isinstance(children, dict):
+                for name, child in children.items():
+                    yield from _walk_schema(
+                        spec, child, f"{trail}.{keyword}.{name}" if trail else f"{keyword}.{name}",
+                        depth + 1, seen,
+                    )
     finally:
         seen.remove(identity)
 
@@ -136,7 +190,7 @@ def _check_sensitive_response_fields(spec: dict[str, Any]) -> list[Finding]:
         if not isinstance(responses, dict):
             continue
         for status, response in responses.items():
-            response = _resolve_local_ref(spec, response)
+            response = resolve_local_ref(spec, response)
             if not isinstance(response, dict):
                 continue
             content = response.get("content", {})
@@ -172,8 +226,8 @@ def _check_sensitive_response_fields(spec: dict[str, Any]) -> list[Finding]:
 
 def _check_unbounded_arrays(spec: dict[str, Any]) -> list[Finding]:
     matches: list[tuple[str, str]] = []
-    for method, path, operation in operations(spec):
-        request_body = _resolve_local_ref(spec, operation.get("requestBody", {}))
+    for method, path, path_item, operation in _operation_entries(spec):
+        request_body = resolve_local_ref(spec, operation.get("requestBody", {}))
         content = request_body.get("content", {}) if isinstance(request_body, dict) else {}
         candidate_schemas: list[dict[str, Any]] = []
         if isinstance(content, dict):
@@ -181,12 +235,28 @@ def _check_unbounded_arrays(spec: dict[str, Any]) -> list[Finding]:
                 if isinstance(media, dict) and isinstance(media.get("schema"), dict):
                     candidate_schemas.append(media["schema"])
         # Swagger 2.0 body parameters use `in: body` and a schema.
-        for parameter in operation.get("parameters", []) if isinstance(operation.get("parameters", []), list) else []:
-            if isinstance(parameter, dict) and parameter.get("in") == "body" and isinstance(parameter.get("schema"), dict):
+        effective_parameters: dict[tuple[str, str], dict[str, Any]] = {}
+        for source in (path_item.get("parameters", []), operation.get("parameters", [])):
+            if not isinstance(source, list):
+                continue
+            for raw_parameter in source:
+                parameter = resolve_local_ref(spec, raw_parameter)
+                if not isinstance(parameter, dict):
+                    continue
+                name, location = parameter.get("name"), parameter.get("in")
+                if not isinstance(name, str) or not isinstance(location, str):
+                    continue
+                effective_parameters[(name, location)] = parameter
+        for parameter in effective_parameters.values():
+            if parameter.get("in") == "body" and isinstance(parameter.get("schema"), dict):
                 candidate_schemas.append(parameter["schema"])
         for schema in candidate_schemas:
             for field_path, node in _walk_schema(spec, schema):
-                if node.get("type") == "array" and "maxItems" not in node:
+                schema_type = node.get("type")
+                is_array = schema_type == "array" or (
+                    isinstance(schema_type, list) and "array" in schema_type
+                ) or (schema_type is None and "items" in node)
+                if is_array and "maxItems" not in node:
                     matches.append((_operation_name(method, path), field_path or "<request body>"))
 
     if not matches:

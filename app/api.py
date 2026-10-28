@@ -3,16 +3,21 @@ import json
 from urllib.parse import urlsplit
 
 from fastapi import APIRouter, HTTPException, Request
-from pydantic import BaseModel, Field, ValidationError, field_validator
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 
 from app.database import Database, QueueFullError
 from app.worker import ScanWorker
 
 MAX_SPEC_BYTES = 2 * 1024 * 1024
+# JSON may expand the uploaded text when clients escape Unicode or control characters.
+# Six times the spec limit covers JSON's maximum per-character escaping plus metadata.
+MAX_REQUEST_BYTES = MAX_SPEC_BYTES * 6 + 16_000
 router = APIRouter(prefix="/api/v1")
 
 
 class ScanCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     name: str = Field(default="", max_length=120)
     target_url: str = Field(min_length=1, max_length=2048)
     filename: str = Field(min_length=1, max_length=255)
@@ -21,14 +26,21 @@ class ScanCreate(BaseModel):
     @field_validator("target_url")
     @classmethod
     def validate_target_url(cls, value: str) -> str:
-        parsed = urlsplit(value.strip())
-        if parsed.scheme not in ("http", "https") or not parsed.hostname:
+        normalized = value.strip()
+        if any(ord(char) <= 0x20 or ord(char) == 0x7F for char in normalized):
+            raise ValueError("The API base URL cannot contain spaces or control characters.")
+        try:
+            parsed = urlsplit(normalized)
+            _ = parsed.port  # Validate the port even though this app does not connect to the URL.
+        except ValueError as exc:
+            raise ValueError("Enter a valid API base URL.") from exc
+        if parsed.scheme.lower() not in ("http", "https") or not parsed.hostname:
             raise ValueError("Enter a complete http:// or https:// API base URL.")
         if parsed.username or parsed.password:
             raise ValueError("Do not put credentials in the target URL.")
         if parsed.query or parsed.fragment:
             raise ValueError("Use a base URL without query parameters or a fragment.")
-        return value.strip().rstrip("/")
+        return normalized.rstrip("/")
 
     @field_validator("filename")
     @classmethod
@@ -41,9 +53,22 @@ class ScanCreate(BaseModel):
 
 @router.post("/scans", status_code=202)
 async def create_scan(request: Request) -> dict:
-    raw = await request.body()
-    if len(raw) > MAX_SPEC_BYTES + 16_000:
-        raise HTTPException(status_code=413, detail="Request is too large. Specifications are limited to 2 MB.")
+    content_length = request.headers.get("content-length")
+    if content_length is not None:
+        try:
+            declared_length = int(content_length)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail="Invalid Content-Length header.") from exc
+        if declared_length < 0:
+            raise HTTPException(status_code=400, detail="Invalid Content-Length header.")
+        if declared_length > MAX_REQUEST_BYTES:
+            raise HTTPException(status_code=413, detail="Request is too large. Specifications are limited to 2 MB.")
+
+    raw = bytearray()
+    async for chunk in request.stream():
+        if len(raw) + len(chunk) > MAX_REQUEST_BYTES:
+            raise HTTPException(status_code=413, detail="Request is too large. Specifications are limited to 2 MB.")
+        raw.extend(chunk)
     try:
         payload = ScanCreate.model_validate(json.loads(raw))
     except (json.JSONDecodeError, UnicodeDecodeError, ValidationError) as exc:
@@ -53,7 +78,11 @@ async def create_scan(request: Request) -> dict:
             else "Request body must be valid UTF-8 JSON."
         )
         raise HTTPException(status_code=422, detail=detail) from exc
-    if len(payload.spec_text.encode("utf-8")) > MAX_SPEC_BYTES:
+    try:
+        spec_size = len(payload.spec_text.encode("utf-8"))
+    except UnicodeEncodeError as exc:
+        raise HTTPException(status_code=422, detail="The specification must contain valid Unicode text.") from exc
+    if spec_size > MAX_SPEC_BYTES:
         raise HTTPException(status_code=413, detail="Specifications are limited to 2 MB.")
 
     database: Database = request.app.state.database
