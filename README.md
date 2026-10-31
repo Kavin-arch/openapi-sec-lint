@@ -63,8 +63,12 @@ python -m uvicorn app.main:app --reload
 - No full request/response captures are retained.
 - Keep this server local. Before adding live scanning or remote users, add target authorization and scope controls, worker egress restrictions, authentication, secret handling, scan cancellation and rate limits.
 
-## Scanner structure
+## Project structure
 
+- `app/api/` contains the scan request and report routes.
+- `app/main.py` assembles the FastAPI app and manages worker startup and shutdown.
+- `app/database.py` owns SQLite persistence; `app/worker.py` processes queued scans.
+- `static/` contains the browser UI, and `examples/` contains the demonstration specification.
 - `app/scanner/parser.py` parses the uploaded document and applies the starter's structural checks.
 - `app/scanner/common.py` contains shared operation and schema traversal helpers.
 - `app/scanner/checks/` contains one module per built-in review check.
