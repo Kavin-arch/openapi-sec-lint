@@ -150,3 +150,15 @@ function escapeHtml(value) {
 
 document.querySelector('#refresh-button').addEventListener('click', refreshHistory);
 refreshHistory();
+loadCheckCount();
+
+async function loadCheckCount() {
+  try {
+    const response = await fetch('/health');
+    if (!response.ok) return;
+    const health = await response.json();
+    if (Number.isInteger(health.checks)) {
+      document.querySelector('#check-count').textContent = String(health.checks);
+    }
+  } catch { /* Keep the static count visible if the health request is unavailable. */ }
+}

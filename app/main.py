@@ -8,6 +8,7 @@ from fastapi.staticfiles import StaticFiles
 
 from app.api import router
 from app.database import Database
+from app.scanner.rules import RULE_COUNT
 from app.worker import ScanWorker
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
@@ -44,5 +45,5 @@ async def home() -> FileResponse:
 
 
 @app.get("/health")
-async def health() -> dict[str, str]:
-    return {"status": "ok", "mode": "offline-spec-analysis"}
+async def health() -> dict[str, str | int]:
+    return {"status": "ok", "mode": "offline-spec-analysis", "checks": RULE_COUNT}

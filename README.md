@@ -63,6 +63,16 @@ python -m uvicorn app.main:app --reload
 - No full request/response captures are retained.
 - Keep this server local. Before adding live scanning or remote users, add target authorization and scope controls, worker egress restrictions, authentication, secret handling, scan cancellation and rate limits.
 
+## Scanner structure
+
+- `app/scanner/parser.py` parses the uploaded document and applies the starter's structural checks.
+- `app/scanner/common.py` contains shared operation and schema traversal helpers.
+- `app/scanner/checks/` contains one module per built-in review check.
+- `app/scanner/rules.py` is the ordered rule registry and retains the scanner's stable import interface.
+- `app/scanner/engine.py` coordinates parsing, rule execution, and summary counts.
+
+To add a check, implement it in `app/scanner/checks/` and register it in `RULES`. The report and home-page check count are derived from that registry.
+
 ## Next implementation stages
 
 1. Add opt-in, low-rate runtime checks behind explicit target scope controls.

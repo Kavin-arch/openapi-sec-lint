@@ -1,7 +1,7 @@
 from typing import Any
 
 from app.scanner.parser import parse_spec
-from app.scanner.rules import operations, run_rules
+from app.scanner.rules import RULE_COUNT, operations, run_rules
 
 
 def analyze(source: str) -> tuple[list[dict[str, Any]], dict[str, int]]:
@@ -12,5 +12,5 @@ def analyze(source: str) -> tuple[list[dict[str, Any]], dict[str, int]]:
         counts[finding["severity"]] += 1
     counts["operations"] = sum(1 for _ in operations(spec))
     counts["findings"] = len(findings)
-    counts["checks"] = 4
+    counts["checks"] = RULE_COUNT
     return findings, counts
