@@ -1,11 +1,14 @@
 import asyncio
 import json
+from typing import Any, cast
 from urllib.parse import urlsplit
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, HTTPException, Request, Response
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
+from starlette.responses import JSONResponse
 
-from app.database import Database, QueueFullError
+from app.database import Database, QueueFullError, ScanInProgressError
+from app.exporters import to_markdown, to_sarif
 from app.worker import ScanWorker
 
 MAX_SPEC_BYTES = 2 * 1024 * 1024
@@ -52,7 +55,7 @@ class ScanCreate(BaseModel):
 
 
 @router.post("/scans", status_code=202)
-async def create_scan(request: Request) -> dict:
+async def create_scan(request: Request) -> dict[str, Any]:
     content_length = request.headers.get("content-length")
     if content_length is not None:
         try:
@@ -62,12 +65,16 @@ async def create_scan(request: Request) -> dict:
         if declared_length < 0:
             raise HTTPException(status_code=400, detail="Invalid Content-Length header.")
         if declared_length > MAX_REQUEST_BYTES:
-            raise HTTPException(status_code=413, detail="Request is too large. Specifications are limited to 2 MB.")
+            raise HTTPException(
+                status_code=413, detail="Request is too large. Specifications are limited to 2 MB."
+            )
 
     raw = bytearray()
     async for chunk in request.stream():
         if len(raw) + len(chunk) > MAX_REQUEST_BYTES:
-            raise HTTPException(status_code=413, detail="Request is too large. Specifications are limited to 2 MB.")
+            raise HTTPException(
+                status_code=413, detail="Request is too large. Specifications are limited to 2 MB."
+            )
         raw.extend(chunk)
     try:
         payload = ScanCreate.model_validate(json.loads(raw))
@@ -81,7 +88,9 @@ async def create_scan(request: Request) -> dict:
     try:
         spec_size = len(payload.spec_text.encode("utf-8"))
     except UnicodeEncodeError as exc:
-        raise HTTPException(status_code=422, detail="The specification must contain valid Unicode text.") from exc
+        raise HTTPException(
+            status_code=422, detail="The specification must contain valid Unicode text."
+        ) from exc
     if spec_size > MAX_SPEC_BYTES:
         raise HTTPException(status_code=413, detail="Specifications are limited to 2 MB.")
 
@@ -102,7 +111,7 @@ async def create_scan(request: Request) -> dict:
 
 
 @router.get("/scans")
-async def list_scans(request: Request, limit: int = 50) -> dict:
+async def list_scans(request: Request, limit: int = 50) -> dict[str, Any]:
     if not 1 <= limit <= 100:
         raise HTTPException(status_code=422, detail="limit must be between 1 and 100.")
     scans = await asyncio.to_thread(request.app.state.database.list_scans, limit)
@@ -110,8 +119,54 @@ async def list_scans(request: Request, limit: int = 50) -> dict:
 
 
 @router.get("/scans/{scan_id}")
-async def get_scan(scan_id: str, request: Request) -> dict:
+async def get_scan(scan_id: str, request: Request) -> dict[str, Any]:
     scan = await asyncio.to_thread(request.app.state.database.get_scan, scan_id)
     if scan is None:
         raise HTTPException(status_code=404, detail="Scan not found.")
-    return scan
+    return cast(dict[str, Any], scan)
+
+
+@router.get("/scans/{scan_id}/export")
+async def export_scan(scan_id: str, request: Request, format: str = "json") -> Response:
+    normalized = format.lower()
+    if normalized not in {"json", "sarif", "md"}:
+        raise HTTPException(status_code=422, detail="format must be sarif, json, or md.")
+    scan = await asyncio.to_thread(request.app.state.database.get_scan, scan_id)
+    if scan is None:
+        raise HTTPException(status_code=404, detail="Scan not found.")
+    if normalized == "json":
+        return JSONResponse(
+            content=scan,
+            headers={"Content-Disposition": f'attachment; filename="scan-{scan_id}.json"'},
+        )
+    if normalized == "sarif":
+        return JSONResponse(
+            content=to_sarif(scan),
+            media_type="application/sarif+json",
+            headers={"Content-Disposition": f'attachment; filename="scan-{scan_id}.sarif"'},
+        )
+    return Response(
+        content=to_markdown(scan),
+        media_type="text/markdown; charset=utf-8",
+        headers={"Content-Disposition": f'attachment; filename="scan-{scan_id}.md"'},
+    )
+
+
+@router.delete("/scans/{scan_id}", status_code=204)
+async def delete_scan(scan_id: str, request: Request) -> Response:
+    try:
+        deleted = await asyncio.to_thread(request.app.state.database.delete_scan, scan_id)
+    except ScanInProgressError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    if not deleted:
+        raise HTTPException(status_code=404, detail="Scan not found.")
+    return Response(status_code=204)
+
+
+@router.delete("/scans", status_code=204)
+async def delete_scans(request: Request) -> Response:
+    try:
+        await asyncio.to_thread(request.app.state.database.delete_scans)
+    except ScanInProgressError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return Response(status_code=204)

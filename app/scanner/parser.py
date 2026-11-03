@@ -1,9 +1,10 @@
 import json
 import re
-from typing import Any
+from typing import Any, cast
 
 import yaml
 
+from app.scanner.common import _openapi_31_or_later
 from app.scanner.references import resolve_local_ref
 
 
@@ -15,10 +16,13 @@ class DuplicateKeyError(ValueError):
     """A JSON or YAML object contains a duplicate key."""
 
 
-class _UniqueKeySafeLoader(yaml.SafeLoader):
-    def construct_mapping(self, node: yaml.MappingNode, deep: bool = False) -> dict:
+_SafeLoaderBase = getattr(yaml, "CSafeLoader", yaml.SafeLoader)
+
+
+class _UniqueKeySafeLoader(_SafeLoaderBase):  # type: ignore[valid-type, misc]
+    def construct_mapping(self, node: yaml.MappingNode, deep: bool = False) -> dict[Any, Any]:
         if not isinstance(node, yaml.MappingNode):
-            return super().construct_mapping(node, deep=deep)
+            return cast(dict[Any, Any], super().construct_mapping(node, deep=deep))
 
         # Check explicit keys before flattening YAML merge keys. Explicit values
         # are allowed to override merged defaults, but duplicates in one mapping
@@ -36,7 +40,7 @@ class _UniqueKeySafeLoader(yaml.SafeLoader):
                 raise DuplicateKeyError("YAML object keys must be scalar values.") from exc
 
         self.flatten_mapping(node)
-        return super().construct_mapping(node, deep=deep)
+        return cast(dict[Any, Any], super().construct_mapping(node, deep=deep))
 
 
 def _unique_json_object(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
@@ -48,14 +52,23 @@ def _unique_json_object(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
     return result
 
 
-def _parse_document(source: str) -> Any:
+def _parse_document(source: str, filename: str | None = None) -> Any:
     stripped = source.lstrip()
-    if stripped.startswith(("{", "[")):
+    is_json_file = isinstance(filename, str) and filename.lower().endswith(".json")
+    is_yaml_file = isinstance(filename, str) and filename.lower().endswith((".yaml", ".yml"))
+    if stripped.startswith(("{", "[")) and not is_yaml_file:
         try:
             return json.loads(source, object_pairs_hook=_unique_json_object)
         except json.JSONDecodeError:
+            # A .json upload is expected to be JSON; do not feed a large
+            # malformed JSON document through YAML's more permissive parser.
+            if is_json_file:
+                raise
+            if len(source) > 256 * 1024:
+                raise
             # JSON is also valid YAML. Let the YAML parser handle flow-style
-            # documents that begin with a brace but are not strict JSON.
+            # documents that begin with a brace but are not strict JSON. Large
+            # files without a YAML extension avoid a potentially slow fallback.
             pass
     return yaml.load(source, Loader=_UniqueKeySafeLoader)
 
@@ -87,15 +100,6 @@ def _valid_security_requirements(value: Any) -> bool:
     )
 
 
-def _openapi_31_or_later(version: Any) -> bool:
-    if not isinstance(version, str):
-        return False
-    try:
-        return tuple(int(part) for part in version.split(".")[:2]) >= (3, 1)
-    except ValueError:
-        return False
-
-
 def _validate_operation_security(spec: dict[str, Any], items: dict[str, Any]) -> None:
     methods = ("get", "post", "put", "patch", "delete", "options", "head", "trace")
     for raw_path_item in items.values():
@@ -112,9 +116,9 @@ def _validate_operation_security(spec: dict[str, Any], items: dict[str, Any]) ->
                 raise SpecError("Operation security fields must be arrays of Security Requirement Objects.")
 
 
-def parse_spec(source: str) -> dict[str, Any]:
+def parse_spec(source: str, filename: str | None = None) -> dict[str, Any]:
     try:
-        document = _parse_document(source)
+        document = _parse_document(source, filename)
     except DuplicateKeyError as exc:
         raise SpecError("Could not parse the file: duplicate object key.") from exc
     except (json.JSONDecodeError, yaml.YAMLError) as exc:
@@ -130,8 +134,13 @@ def parse_spec(source: str) -> dict[str, Any]:
     version = document.get("openapi")
     swagger = document.get("swagger")
     if "openapi" in document and "swagger" in document:
-        raise SpecError("Use either the OpenAPI 'openapi' version or Swagger 'swagger' version field, not both.")
-    is_openapi_3 = isinstance(version, str) and re.fullmatch(r"3\.\d+\.\d+", version) is not None
+        raise SpecError(
+            "Use either the OpenAPI 'openapi' version or Swagger 'swagger' version field, not both."
+        )
+    is_openapi_3 = (
+        isinstance(version, str)
+        and re.fullmatch(r"3\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?", version) is not None
+    )
     is_swagger_2 = swagger == "2.0"
     if not (is_openapi_3 or is_swagger_2):
         raise SpecError("Supported formats are OpenAPI 3.x and Swagger 2.0.")

@@ -1,87 +1,101 @@
 # API Vulnerability Checker
 
-A lightweight, local-first API specification reviewer. It accepts an OpenAPI 3.x or Swagger 2.0 JSON/YAML file, queues an offline analysis, and stores scan history and findings in a local SQLite database.
+A local-first static reviewer for OpenAPI 3.x and Swagger 2.0 specifications. It parses JSON or YAML, runs contract checks, and stores scan history in SQLite. **It does not send requests to the target API.** Findings are review signals, not confirmation of runtime vulnerabilities.
 
-The first release is intentionally small enough to run on a development PC. **It does not send HTTP requests to the target API.** The target URL is saved as report metadata only. Findings are specification review signals, not confirmation of runtime vulnerabilities.
+## Checks
 
-## Included checks
+| Rule | Signal |
+|---|---|
+| `AUTH-001` | Operations without an effective documented security requirement |
+| `AUTH-002` | Undefined security scheme references or HTTP Basic paired with a declared HTTP server |
+| `AUTH-003` | OAuth flows without documented scopes or operations selecting no scopes |
+| `BOLA-001` | Identifier-like integer parameters for manual object-authorization review |
+| `MASS-001` | Write schemas that permit undeclared fields or omit `readOnly` on likely server-managed fields |
+| `TRANSPORT-001` | Declared plain HTTP servers |
+| `TRANSPORT-002` | Server templates that permit HTTP or unencrypted `ws://` servers |
+| `DATA-001` | Sensitive-looking response field names |
+| `RESOURCE-001` | Request arrays without documented `maxItems` |
+| `RESOURCE-002` | Request strings/maps without documented limits or top-level GET arrays without pagination parameters |
+| `SSRF-001` | URL-like request fields without a schema enum or pattern constraint |
 
-| Rule | What it flags | Interpretation |
-|---|---|---|
-| `AUTH-001` | Operations without an effective OpenAPI security requirement | The contract does not document authentication. Runtime enforcement may still exist. |
-| `TRANSPORT-001` | A server definition using plain HTTP | Review whether HTTPS is available and enforced. |
-| `DATA-001` | Sensitive-looking field names in response schemas | A low-confidence name heuristic; confirm whether the field contains sensitive data. |
-| `RESOURCE-001` | Request arrays without a documented `maxItems` | A low-confidence resource-limit review hint. |
+Several checks are deliberately heuristic. In particular, identifier shapes do not prove BOLA, schema flags do not prove server behavior, and missing URL constraints do not prove SSRF. Review findings against the implementation and its runtime controls.
 
-Each report includes severity, confidence, evidence, affected operations, impact, and remediation guidance. Confidence is separate from severity because a noteworthy signal can still be uncertain.
+Local JSON Pointer `$ref` references are followed; external references are never fetched. Findings include JSON Pointer locations. `x-security-ignore: ["RULE-ID"]` on an operation suppresses that rule for the operation; on a schema property it suppresses findings at that property and below it.
 
-Local JSON Pointer references (such as `#/components/schemas/Record`) are followed within the uploaded file. External references are never fetched.
+## Run locally
 
-## Run locally on Windows
-
-Python 3.11 or newer is recommended. From PowerShell in this folder:
+Python 3.11 or 3.12 is supported. From PowerShell:
 
 ```powershell
 py -3.11 -m venv .venv
 .\.venv\Scripts\Activate.ps1
-python -m pip install -r requirements.txt
+python -m pip install -e ".[dev]"
 python -m uvicorn app.main:app --reload
 ```
 
-Open <http://127.0.0.1:8000>. The interactive API documentation is at <http://127.0.0.1:8000/docs>.
+Open <http://127.0.0.1:8000>. The API documentation is at <http://127.0.0.1:8000/docs>. macOS and Linux users can create a virtual environment with `python3 -m venv .venv` and activate it with `source .venv/bin/activate`.
 
-On macOS or Linux, create and activate a virtual environment with `python3 -m venv .venv` and `source .venv/bin/activate`, then install the same requirements and run Uvicorn.
+The app is intended for local use. Keep it bound to `127.0.0.1`; it does not include accounts or authentication.
 
-The app is designed for local use. Keep it bound to `127.0.0.1`; do not expose it to a network because this starter does not include user accounts or authentication.
+## CLI
+
+The CLI runs the scanner directly without starting Uvicorn or using SQLite:
+
+```powershell
+python -m app.cli scan examples/sample-openapi.yaml --fail-on medium --format sarif
+```
+
+Install the project to get the `api-checker` command. Formats are `json`, `sarif`, and `md`. `--fail-on` returns exit code 1 when a finding at that severity or higher is present.
 
 ## Try the sample
 
-Upload [`examples/sample-openapi.yaml`](examples/sample-openapi.yaml) from the UI. It deliberately includes several signals for demonstration.
+Use **Try Sample Spec** in the upload form to load `examples/sample-openapi.yaml` without browsing for it.
 
 ## API
 
-- `GET /health` — local process status.
+- `GET /health` — process status and registered check count.
 - `POST /api/v1/scans` — queue a scan. The JSON body contains `name` (optional), `target_url`, `filename`, and `spec_text`.
 - `GET /api/v1/scans?limit=50` — list recent scans.
-- `GET /api/v1/scans/{id}` — read scan status, summary, and findings.
+- `GET /api/v1/scans/{id}` — read status, summary, findings, and the source SHA-256 fingerprint.
+- `GET /api/v1/scans/{id}/export?format=sarif|json|md` — download a report.
+- `DELETE /api/v1/scans/{id}` — delete a completed or failed scan.
+- `DELETE /api/v1/scans` — clear history when no scans are queued or running.
+- `GET /api/v1/sample-spec` — load the bundled sample for the UI.
 
-Uploads are limited to 2 MB and 2,000 operations, including OpenAPI 3.1+ webhooks. JSON and YAML are parsed locally; duplicate object keys and missing required top-level metadata are rejected. The parser performs structural checks, not full OpenAPI schema validation. The original specification is removed from the database when analysis completes; findings and scan metadata remain in `data/scanner.sqlite3`. The `data/` folder is ignored by Git.
+Uploads are limited to 2 MB and 2,000 operations, including OpenAPI 3.1+ webhooks. Duplicate JSON/YAML object keys and missing required top-level metadata are rejected. This is structural parsing, not full OpenAPI validation. The source specification is removed from SQLite after analysis; its SHA-256, report, and metadata remain in `data/scanner.sqlite3`.
 
-To store the SQLite file elsewhere, set `API_VULN_DB` before starting the server, for example:
+Set `API_VULN_DB` to store the SQLite file elsewhere:
 
 ```powershell
 $env:API_VULN_DB = "D:\api-checker-data\scanner.sqlite3"
 python -m uvicorn app.main:app --reload
 ```
 
+## Docker
+
+Build and run the non-root container with a persistent named volume for SQLite history:
+
+```powershell
+docker build -t api-vulnerability-checker .
+docker run --rm -p 127.0.0.1:8000:8000 -v api-checker-data:/app/data api-vulnerability-checker
+```
+
+## Development and CI
+
+The optional `dev` dependencies include pytest, pytest-cov, Ruff, and mypy. Run checks locally with:
+
+```powershell
+ruff check app tests
+mypy app
+pytest --cov=app --cov-report=term-missing
+```
+
+GitHub Actions runs these checks on Python 3.11 and 3.12 for pushes and pull requests.
+
 ## Current boundaries
 
-- The worker is an in-process, single-worker queue backed by SQLite. Queued jobs survive a restart; a scan interrupted during shutdown is put back in the queue on the next startup.
-- The local queue accepts at most 10 queued or running scans to keep disk use bounded.
-- External `$ref` references are not fetched, so checks that depend on those references may be incomplete.
-- There are no live probes, credentials, BOLA/IDOR checks, rate-limit tests, injection payloads, or runtime header checks yet.
+- The worker is an in-process single-worker queue backed by SQLite. Queued jobs survive restart; running jobs are requeued at startup.
+- The local queue accepts at most 10 queued or running scans.
+- There are no live probes, credentials, rate-limit tests, injection payloads, or runtime header checks.
 - No full request/response captures are retained.
-- Keep this server local. Before adding live scanning or remote users, add target authorization and scope controls, worker egress restrictions, authentication, secret handling, scan cancellation and rate limits.
-
-## Project structure
-
-- `app/api/` contains the scan request and report routes.
-- `app/main.py` assembles the FastAPI app and manages worker startup and shutdown.
-- `app/database.py` owns SQLite persistence; `app/worker.py` processes queued scans.
-- `static/` contains the browser UI, and `examples/` contains the demonstration specification.
-- `app/scanner/parser.py` parses the uploaded document and applies the starter's structural checks.
-- `app/scanner/common.py` contains shared operation and schema traversal helpers.
-- `app/scanner/checks/` contains one module per built-in review check.
-- `app/scanner/rules.py` is the ordered rule registry and retains the scanner's stable import interface.
-- `app/scanner/engine.py` coordinates parsing, rule execution, and summary counts.
-
-To add a check, implement it in `app/scanner/checks/` and register it in `RULES`. The report and home-page check count are derived from that registry.
-
-## Next implementation stages
-
-1. Add opt-in, low-rate runtime checks behind explicit target scope controls.
-2. Add authenticated scan profiles and evidence redaction.
-3. Replace the local queue with Celery/Redis and move persistence to PostgreSQL when deploying on Linux or serving multiple users.
-4. Add report export and retention controls.
-
-The scanner engine and database access live behind separate modules so the scan rules can grow independently and the local queue/database can be replaced as the deployment needs change.
+- Before serving remote users, add authentication and authorization, retention controls, scan cancellation, rate limits, worker and storage hardening, and an operational queue/database design suitable for the deployment.

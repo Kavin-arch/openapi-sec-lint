@@ -1,7 +1,6 @@
 from dataclasses import asdict, dataclass, field
 from typing import Any, Literal
 
-
 Severity = Literal["critical", "high", "medium", "low", "info"]
 Confidence = Literal["high", "medium", "low"]
 

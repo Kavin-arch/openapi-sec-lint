@@ -5,12 +5,30 @@ const formError = document.querySelector('#form-error');
 const submitButton = document.querySelector('#submit-button');
 const resultSection = document.querySelector('#result-section');
 const historyList = document.querySelector('#history-list');
+const findingsList = document.querySelector('#findings-list');
 let selectedFile = null;
+let activeScan = null;
 
 fileInput.addEventListener('change', () => {
   selectedFile = fileInput.files?.[0] || null;
   fileLabel.textContent = selectedFile ? selectedFile.name : 'Choose a JSON or YAML file';
   formError.hidden = true;
+});
+
+document.querySelector('#sample-button').addEventListener('click', async () => {
+  const button = document.querySelector('#sample-button');
+  button.disabled = true;
+  try {
+    const response = await fetch('/api/v1/sample-spec');
+    if (!response.ok) throw new Error('Could not load the sample specification.');
+    selectedFile = new File([await response.blob()], 'sample-openapi.yaml', { type: 'text/yaml' });
+    fileLabel.textContent = selectedFile.name;
+    formError.hidden = true;
+  } catch (error) {
+    showError(error.message || 'Could not load the sample specification.');
+  } finally {
+    button.disabled = false;
+  }
 });
 
 const dropZone = document.querySelector('#file-drop');
@@ -77,46 +95,89 @@ function showError(message) {
 }
 
 async function pollScan(id) {
+  let delay = 150;
   for (let attempt = 0; attempt < 120; attempt += 1) {
     const response = await fetch(`/api/v1/scans/${encodeURIComponent(id)}`);
     if (!response.ok) throw new Error('Could not load scan status.');
     const scan = await response.json();
     renderScan(scan);
     if (scan.status === 'completed' || scan.status === 'failed') return;
-    await new Promise((resolve) => setTimeout(resolve, 900));
+    await new Promise((resolve) => setTimeout(resolve, delay));
+    delay = Math.min(900, delay * 2);
   }
   document.querySelector('#scan-message').textContent = 'Still working. You can return to this report from Recent scans.';
 }
 
 function renderScan(scan) {
+  activeScan = scan;
   resultSection.hidden = false;
   document.querySelector('#result-title').textContent = scan.name;
   const status = document.querySelector('#status-badge');
   status.textContent = scan.status;
   status.className = `status-badge ${scan.status}`;
   const summary = scan.summary || {};
+  const severityTiles = ['critical', 'high', 'medium', 'low', 'info'];
   document.querySelector('#scan-summary').innerHTML = [
     ['findings', summary.findings ?? '—'], ['operations', summary.operations ?? '—'],
-    ['medium', summary.medium ?? 0], ['low', summary.low ?? 0],
+    ...severityTiles.map((level) => [level, summary[level] ?? 0]),
   ].map(([label, value]) => `<div class="summary-tile"><strong>${escapeHtml(String(value))}</strong><span>${escapeHtml(label)}</span></div>`).join('');
 
   const message = document.querySelector('#scan-message');
   if (scan.status === 'failed') message.textContent = scan.error || 'The scan could not be completed.';
-  else if (scan.status === 'completed') message.textContent = `Analyzed ${summary.operations ?? 0} operations in ${scan.spec_filename}. No requests were sent to ${scan.target_url}.`;
+  else if (scan.status === 'completed') message.textContent = `Analyzed ${summary.operations ?? 0} operations in ${scan.spec_filename}. No requests were sent to ${scan.target_url}. SHA-256: ${scan.spec_sha256 || 'unavailable'}`;
   else message.textContent = 'Queued. Analyzing the uploaded definition locally…';
 
-  const list = document.querySelector('#findings-list');
+  document.querySelector('#export-links').hidden = scan.status !== 'completed';
+  document.querySelector('#export-links').innerHTML = scan.status === 'completed'
+    ? ['json', 'sarif', 'md'].map((format) => `<a href="/api/v1/scans/${encodeURIComponent(scan.id)}/export?format=${format}" download>Download ${format.toUpperCase()}</a>`).join('')
+    : '';
   const findings = scan.findings || [];
+  document.querySelector('#finding-controls').hidden = findings.length === 0;
+  renderFindings(findings);
+}
+
+function renderFindings(findings) {
   if (!findings.length) {
-    list.innerHTML = scan.status === 'completed' ? '<div class="empty-findings">No findings from the included checks. This does not establish that the live API is secure.</div>' : '';
+    findingsList.innerHTML = activeScan?.status === 'completed'
+      ? '<div class="empty-findings">No findings from the included checks. This does not establish that the live API is secure.</div>'
+      : '';
     return;
   }
-  list.innerHTML = findings.map((finding) => {
+  const severity = document.querySelector('#filter-severity').value;
+  const confidence = document.querySelector('#filter-confidence').value;
+  const rule = document.querySelector('#filter-rule').value.trim().toLowerCase();
+  const endpoint = document.querySelector('#filter-endpoint').value.trim().toLowerCase();
+  const filtered = findings.filter((finding) => {
+    if (severity && finding.severity !== severity) return false;
+    if (confidence && finding.confidence !== confidence) return false;
+    if (rule && !finding.rule_id.toLowerCase().includes(rule)) return false;
+    if (endpoint && !(finding.affected_operations || []).some((operation) => operation.toLowerCase().includes(endpoint))) return false;
+    return true;
+  });
+  if (!filtered.length) {
+    findingsList.innerHTML = '<div class="empty-findings">No findings match these filters.</div>';
+    return;
+  }
+  findingsList.innerHTML = filtered.map((finding) => {
     const ops = finding.affected_operations?.length ? `<div class="operations">${finding.affected_operations.map(escapeHtml).join('<br>')}</div>` : '';
-    const evidence = finding.evidence?.servers || finding.evidence?.schema_fields;
-    const evidenceHtml = evidence?.length ? `<div class="operations">${evidence.map(escapeHtml).join('<br>')}</div>` : '';
-    return `<article class="finding"><div class="finding-top"><span class="severity ${escapeHtml(finding.severity)}">${escapeHtml(finding.severity)}</span><span class="rule-id">${escapeHtml(finding.rule_id)}</span><span class="confidence">${escapeHtml(finding.confidence)} confidence</span></div><h3>${escapeHtml(finding.title)}</h3><p>${escapeHtml(finding.summary)}</p><p><strong>Potential impact:</strong> ${escapeHtml(finding.impact)}</p><p class="remediation"><strong>Suggested review:</strong> ${escapeHtml(finding.remediation)}</p>${ops}${evidenceHtml}</article>`;
+    const evidence = finding.evidence || {};
+    const details = evidence.servers || evidence.schema_fields || evidence.fields || evidence.issues || evidence.parameters;
+    const evidenceHtml = details?.length ? `<div class="operations">${details.map(escapeHtml).join('<br>')}</div>` : '';
+    const pointers = evidence.json_pointers;
+    const pointerHtml = pointers?.length ? `<div class="operations pointer-list"><strong>Specification locations</strong><br>${pointers.map(escapeHtml).join('<br>')}</div>` : '';
+    let truncation = '';
+    if (evidence.truncated) {
+      const shown = Math.min(Number(evidence.total_matches) || 100, pointers?.length || details?.length || 100);
+      const total = Number(evidence.total_matches);
+      truncation = `<span class="truncation-badge">${total > 0 ? `Showing ${shown} of ${total} affected entries` : `Showing the first ${shown} affected entries`}</span>`;
+    }
+    return `<article class="finding"><div class="finding-top"><span class="severity ${escapeHtml(finding.severity)}">${escapeHtml(finding.severity)}</span><span class="rule-id">${escapeHtml(finding.rule_id)}</span><span class="confidence">${escapeHtml(finding.confidence)} confidence</span></div><h3>${escapeHtml(finding.title)}</h3><p>${escapeHtml(finding.summary)}</p><p><strong>Potential impact:</strong> ${escapeHtml(finding.impact)}</p><p class="remediation"><strong>Suggested review:</strong> ${escapeHtml(finding.remediation)}</p>${truncation}${ops}${evidenceHtml}${pointerHtml}</article>`;
   }).join('');
+}
+
+for (const id of ['filter-severity', 'filter-confidence', 'filter-rule', 'filter-endpoint']) {
+  document.querySelector(`#${id}`).addEventListener('input', () => renderFindings(activeScan?.findings || []));
+  document.querySelector(`#${id}`).addEventListener('change', () => renderFindings(activeScan?.findings || []));
 }
 
 async function refreshHistory() {
@@ -128,12 +189,9 @@ async function refreshHistory() {
       historyList.innerHTML = '<div class="empty-state">Your scan reports will appear here.</div>';
       return;
     }
-    historyList.innerHTML = payload.items.map((scan) => `<div class="history-row" role="button" tabindex="0" data-id="${escapeHtml(scan.id)}"><div class="history-name"><strong>${escapeHtml(scan.name)}</strong><small>${escapeHtml(scan.target_url)} · ${escapeHtml(new Date(scan.created_at).toLocaleString())}</small></div><span class="history-count">${scan.summary?.findings ?? '—'} findings</span><span class="history-status">${escapeHtml(scan.status)}</span></div>`).join('');
-    historyList.querySelectorAll('.history-row').forEach((row) => {
-      const open = () => loadScan(row.dataset.id);
-      row.addEventListener('click', open);
-      row.addEventListener('keydown', (event) => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); open(); } });
-    });
+    historyList.innerHTML = payload.items.map((scan) => `<div class="history-row"><button class="history-open" type="button" data-id="${escapeHtml(scan.id)}"><span class="history-name"><strong>${escapeHtml(scan.name)}</strong><small>${escapeHtml(scan.target_url)} · ${escapeHtml(new Date(scan.created_at).toLocaleString())}</small></span><span class="history-count">${escapeHtml(String(scan.summary?.findings ?? '—'))} findings</span><span class="history-status">${escapeHtml(scan.status)}</span></button><button class="history-delete" type="button" data-id="${escapeHtml(scan.id)}" aria-label="Delete ${escapeHtml(scan.name)}" ${['queued', 'running'].includes(scan.status) ? 'disabled title="Wait until the scan finishes"' : ''}>Delete</button></div>`).join('');
+    historyList.querySelectorAll('.history-open').forEach((button) => button.addEventListener('click', () => loadScan(button.dataset.id)));
+    historyList.querySelectorAll('.history-delete').forEach((button) => button.addEventListener('click', () => deleteHistoryItem(button.dataset.id)));
   } catch { /* Keep the current history visible if the network is temporarily unavailable. */ }
 }
 
@@ -143,6 +201,27 @@ async function loadScan(id) {
   renderScan(await response.json());
   resultSection.scrollIntoView({ behavior: 'smooth', block: 'start' });
 }
+
+async function deleteHistoryItem(id) {
+  const response = await fetch(`/api/v1/scans/${encodeURIComponent(id)}`, { method: 'DELETE' });
+  if (response.status === 409) return showError('Wait for the scan to finish before deleting it.');
+  if (!response.ok && response.status !== 404) return showError('Could not delete this scan.');
+  if (activeScan?.id === id) {
+    activeScan = null;
+    resultSection.hidden = true;
+  }
+  await refreshHistory();
+}
+
+document.querySelector('#clear-history-button').addEventListener('click', async () => {
+  if (!window.confirm('Delete all scan history? This cannot be undone.')) return;
+  const response = await fetch('/api/v1/scans', { method: 'DELETE' });
+  if (response.status === 409) return showError('Wait for queued and running scans to finish before clearing history.');
+  if (!response.ok) return showError('Could not clear scan history.');
+  activeScan = null;
+  resultSection.hidden = true;
+  await refreshHistory();
+});
 
 function escapeHtml(value) {
   return String(value).replace(/[&<>"']/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[char]);

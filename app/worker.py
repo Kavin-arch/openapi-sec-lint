@@ -43,7 +43,9 @@ class ScanWorker:
                 continue
 
             try:
-                findings, summary = await asyncio.to_thread(analyze, job["source_spec"] or "")
+                findings, summary = await asyncio.to_thread(
+                    analyze, job["source_spec"] or "", job.get("spec_filename")
+                )
                 await asyncio.to_thread(self.database.complete_scan, job["id"], findings, summary)
             except Exception as exc:  # Store a concise error; full details stay in server logs.
                 logger.error("Scan %s failed (%s)", job["id"], type(exc).__name__)

@@ -39,6 +39,7 @@
           <span class="browse">Browse</span>
         </label>
         <input id="spec-file" name="spec_file" type="file" accept=".json,.yaml,.yml,application/json,text/yaml" required hidden>
+        <button id="sample-button" class="text-button sample-button" type="button">Try Sample Spec</button>
         <div id="form-error" class="form-error" role="alert" hidden></div>
         <button id="submit-button" class="primary-button" type="submit"><span>Analyze specification</span><span aria-hidden="true">→</span></button>
       </form>
@@ -49,11 +50,31 @@
       <div class="panel-head"><div><div class="eyebrow">SCAN REPORT</div><h2 id="result-title">Results</h2></div><span id="status-badge" class="status-badge">Queued</span></div>
       <div id="scan-summary" class="summary-grid"></div>
       <div id="scan-message" class="scan-message"></div>
+      <div id="export-links" class="export-links" hidden></div>
+      <div id="finding-controls" class="finding-controls" hidden>
+        <label>Severity
+          <select id="filter-severity">
+            <option value="">All severities</option><option>critical</option><option>high</option>
+            <option>medium</option><option>low</option><option>info</option>
+          </select>
+        </label>
+        <label>Confidence
+          <select id="filter-confidence">
+            <option value="">All confidence</option><option>high</option><option>medium</option><option>low</option>
+          </select>
+        </label>
+        <label>Rule ID
+          <input id="filter-rule" type="search" placeholder="e.g. AUTH-001">
+        </label>
+        <label>Endpoint
+          <input id="filter-endpoint" type="search" placeholder="/orders">
+        </label>
+      </div>
       <div id="findings-list" class="findings-list"></div>
     </section>
 
     <section class="history-section">
-      <div class="history-heading"><div><div class="eyebrow">LOCAL HISTORY</div><h2>Recent scans</h2></div><button id="refresh-button" class="text-button" type="button">Refresh ↻</button></div>
+    <div class="history-heading"><div><div class="eyebrow">LOCAL HISTORY</div><h2>Recent scans</h2></div><div class="history-actions"><button id="clear-history-button" class="text-button" type="button">Clear history</button><button id="refresh-button" class="text-button" type="button">Refresh ↻</button></div></div>
       <div id="history-list" class="history-list"><div class="empty-state">Your completed scan reports will appear here.</div></div>
     </section>
     <footer>API Checker <span>·</span> v0.1.0 <span>·</span> Offline specification analysis</footer>
