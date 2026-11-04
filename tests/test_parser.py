@@ -2,7 +2,7 @@ import json
 
 import pytest
 
-from app.scanner.parser import SpecError, _UniqueKeySafeLoader, parse_spec
+from api_checker.scanner.parser import SpecError, _UniqueKeySafeLoader, parse_spec, source_line_map
 
 
 def test_json_duplicate_keys_are_rejected():
@@ -46,14 +46,13 @@ def test_openapi_31_allows_components_without_paths():
     assert parse_spec(json.dumps(document))["components"] == {"schemas": {}}
 
 
-def test_operation_limit_is_enforced_at_2000():
+def test_specs_are_limited_by_bytes_instead_of_operation_count():
     methods = ("get", "post", "put", "patch", "delete", "options", "head", "trace")
     paths = {f"/items/{index}": {method: {} for method in methods} for index in range(250)}
     document = {"openapi": "3.0.3", "info": {"title": "A", "version": "1"}, "paths": paths}
     assert parse_spec(json.dumps(document))["info"]["title"] == "A"
     paths["/items/extra"] = {"get": {}}
-    with pytest.raises(SpecError, match="2,000 operations"):
-        parse_spec(json.dumps(document))
+    assert parse_spec(json.dumps(document))["info"]["title"] == "A"
 
 
 def test_large_invalid_json_does_not_fall_back_to_yaml():
@@ -65,3 +64,19 @@ def test_custom_loader_uses_c_loader_when_available():
     import yaml
 
     assert issubclass(_UniqueKeySafeLoader, getattr(yaml, "CSafeLoader", yaml.SafeLoader))
+
+
+def test_source_line_map_uses_escaped_json_pointer_tokens():
+    source = """openapi: 3.0.3
+info:
+  title: A
+  version: '1'
+paths:
+  /users:
+    get:
+      responses:
+        '200':
+          description: ok
+"""
+    lines = source_line_map(source)
+    assert lines["#/paths/~1users/get/responses/200/description"] == 10

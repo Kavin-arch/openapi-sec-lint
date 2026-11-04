@@ -3,9 +3,21 @@ requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "api-vulnerability-checker"
-version = "0.2.0"
-description = "Local static security review for OpenAPI and Swagger specifications"
+name = "openapi-sec-lint"
+version = "0.3.0"
+description = "Local security linting for OpenAPI and Swagger specifications"
+readme = "README.md"
+license = "MIT"
+keywords = ["openapi", "swagger", "security", "lint", "api"]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Environment :: Web Environment",
+  "Intended Audience :: Developers",
+  "License :: OSI Approved :: MIT License",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Topic :: Security",
+]
 requires-python = ">=3.11,<3.13"
 dependencies = [
   "fastapi>=0.115,<1.0",
@@ -13,6 +25,11 @@ dependencies = [
   "uvicorn>=0.30,<1.0",
   "PyYAML>=6.0,<7.0",
 ]
+
+[project.urls]
+Repository = "https://github.com/Kavin-arch/api-vulnerability-checker"
+Documentation = "https://github.com/Kavin-arch/api-vulnerability-checker/tree/main/docs"
+Issues = "https://github.com/Kavin-arch/api-vulnerability-checker/issues"
 
 [project.optional-dependencies]
 dev = [
@@ -22,13 +39,19 @@ dev = [
   "pytest-cov>=5.0,<7.0",
   "ruff>=0.6,<1.0",
   "types-PyYAML>=6.0,<7.0",
+  "bandit>=1.7,<2.0",
+  "pip-audit>=2.7,<3.0",
 ]
 
 [project.scripts]
-api-checker = "app.cli:main"
+api-checker = "api_checker.cli:main"
+openapi-sec-lint = "api_checker.cli:main"
+
+[tool.setuptools.package-data]
+api_checker = ["static/*", "examples/*"]
 
 [tool.setuptools.packages.find]
-include = ["app*"]
+include = ["api_checker*"]
 
 [tool.ruff]
 line-length = 110
@@ -41,5 +64,5 @@ ignore = ["E501"]
 [tool.mypy]
 python_version = "3.11"
 strict = true
-files = ["app"]
+files = ["api_checker"]
 ignore_missing_imports = true

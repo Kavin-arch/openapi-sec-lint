@@ -1,5 +1,5 @@
-from app.scanner.common import _walk_schema
-from app.scanner.references import pointer_fragment, resolve_local_ref
+from api_checker.scanner.common import _walk_schema
+from api_checker.scanner.references import pointer_fragment, resolve_local_ref
 
 
 def test_escaped_pointer_tokens_and_percent_encoded_fragment():

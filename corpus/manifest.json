@@ -1,0 +1,54 @@
+{
+  "scanner_version": "0.3.0",
+  "retrieved_at": "2026-11-04",
+  "specs": [
+    {
+      "file": "petstore.yaml",
+      "source": "https://raw.githubusercontent.com/swagger-api/swagger-petstore/master/src/main/resources/openapi.yaml",
+      "upstream_license": "Apache-2.0 (declared in the specification)",
+      "sha256": "65cfe2e8826c81db0eea34c51d18da3a305ae4840f1a778cd63b89d396efb687",
+      "summary": {
+        "critical": 0,
+        "high": 0,
+        "medium": 11,
+        "low": 49,
+        "info": 0,
+        "operations": 19,
+        "findings": 60,
+        "checks": 11
+      }
+    },
+    {
+      "file": "github-rest.yaml",
+      "source": "https://raw.githubusercontent.com/github/rest-api-description/main/descriptions/api.github.com/api.github.com.yaml",
+      "upstream_license": "MIT",
+      "sha256": "7b80b1f0d35b7492889d5994a50d88748bdc94f731bb796f2e8d3c21b82a16d4",
+      "summary": {
+        "critical": 0,
+        "high": 0,
+        "medium": 1353,
+        "low": 2848,
+        "info": 0,
+        "operations": 1259,
+        "findings": 4201,
+        "checks": 11
+      }
+    },
+    {
+      "file": "stripe-openapi.json",
+      "source": "https://raw.githubusercontent.com/stripe/openapi/master/openapi/spec3.json",
+      "upstream_license": "MIT",
+      "sha256": "7cff4cc46d0654101a36a3302f7544640f5f73e4f3cad6f264f0e23c19fa1776",
+      "summary": {
+        "critical": 0,
+        "high": 0,
+        "medium": 90,
+        "low": 8690,
+        "info": 0,
+        "operations": 612,
+        "findings": 8780,
+        "checks": 11
+      }
+    }
+  ]
+}

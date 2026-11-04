@@ -1,0 +1,84 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#101827">
+  <title>OpenAPI Security Lint</title>
+  <link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="/" aria-label="OpenAPI Security Lint home"><span class="brand-mark">O</span><span>OpenAPI Security Lint</span></a>
+    <div class="top-meta"><span class="live-dot"></span> Local scan workspace <a href="/docs">API docs</a></div>
+  </header>
+
+  <main class="layout">
+    <section class="intro">
+      <div class="eyebrow">OPENAPI SECURITY REVIEW</div>
+      <h1>Find the risks hiding<br>in your API contract.</h1>
+      <p>Review an OpenAPI or Swagger definition for common security signals. Your uploaded specification stays on this machine.</p>
+      <div class="notice"><span class="notice-icon">i</span><span><strong>Specification only.</strong> This version does not send requests to the target API. Findings are review signals, not proof of a live vulnerability.</span></div>
+      <div class="mini-stats"><div><strong id="check-count">11</strong><span>checks included</span></div><div><strong>16 MB</strong><span>maximum spec size</span></div><div><strong>0</strong><span>target requests sent</span></div></div>
+    </section>
+
+    <section class="panel scan-panel" aria-labelledby="scan-title">
+      <div class="panel-head"><div><div class="eyebrow">NEW REVIEW</div><h2 id="scan-title">Start a scan</h2></div><span class="step-badge">01 / SPEC</span></div>
+      <form id="scan-form">
+        <label for="scan-name">Scan name <span class="optional">optional</span></label>
+        <input id="scan-name" name="name" maxlength="120" placeholder="e.g. Payments API review">
+
+        <label for="target-url">API base URL</label>
+        <input id="target-url" name="target_url" type="url" required placeholder="https://api.example.com">
+        <p class="field-help">Saved with the report for reference. This build will not connect to it.</p>
+
+        <label for="spec-file">OpenAPI / Swagger file</label>
+        <label class="file-drop" for="spec-file" id="file-drop">
+          <span class="upload-icon">↑</span>
+          <span class="file-copy"><strong id="file-label">Choose a JSON or YAML file</strong><small>OpenAPI 3.x or Swagger 2.0 · up to 16 MB</small></span>
+          <span class="browse">Browse</span>
+        </label>
+        <input id="spec-file" name="spec_file" type="file" accept=".json,.yaml,.yml,application/json,text/yaml" required hidden>
+        <button id="sample-button" class="text-button sample-button" type="button">Try Sample Spec</button>
+        <div id="form-error" class="form-error" role="alert" hidden></div>
+        <button id="submit-button" class="primary-button" type="submit"><span>Analyze specification</span><span aria-hidden="true">→</span></button>
+      </form>
+      <div class="privacy-note"><span>⌑</span> Runs locally · No API credentials needed · No network probes</div>
+    </section>
+
+    <section id="result-section" class="panel results-panel" hidden aria-live="polite">
+      <div class="panel-head"><div><div class="eyebrow">SCAN REPORT</div><h2 id="result-title">Results</h2></div><span id="status-badge" class="status-badge">Queued</span></div>
+      <div id="scan-summary" class="summary-grid"></div>
+      <div id="scan-message" class="scan-message"></div>
+      <div id="export-links" class="export-links" hidden></div>
+      <div id="finding-controls" class="finding-controls" hidden>
+        <label>Severity
+          <select id="filter-severity">
+            <option value="">All severities</option><option>critical</option><option>high</option>
+            <option>medium</option><option>low</option><option>info</option>
+          </select>
+        </label>
+        <label>Confidence
+          <select id="filter-confidence">
+            <option value="">All confidence</option><option>high</option><option>medium</option><option>low</option>
+          </select>
+        </label>
+        <label>Rule ID
+          <input id="filter-rule" type="search" placeholder="e.g. AUTH-001">
+        </label>
+        <label>Endpoint
+          <input id="filter-endpoint" type="search" placeholder="/orders">
+        </label>
+      </div>
+      <div id="findings-list" class="findings-list"></div>
+    </section>
+
+    <section class="history-section">
+    <div class="history-heading"><div><div class="eyebrow">LOCAL HISTORY</div><h2>Recent scans</h2></div><div class="history-actions"><button id="clear-history-button" class="text-button" type="button">Clear history</button><button id="refresh-button" class="text-button" type="button">Refresh ↻</button></div></div>
+      <div id="history-list" class="history-list"><div class="empty-state">Your completed scan reports will appear here.</div></div>
+    </section>
+    <footer>OpenAPI Security Lint <span>·</span> Offline specification analysis</footer>
+  </main>
+  <script src="/static/app.js" defer></script>
+</body>
+</html>

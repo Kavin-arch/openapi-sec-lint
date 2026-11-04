@@ -51,7 +51,7 @@ form.addEventListener('submit', async (event) => {
   event.preventDefault();
   formError.hidden = true;
   if (!selectedFile) return showError('Choose an OpenAPI or Swagger file first.');
-  if (selectedFile.size > 2 * 1024 * 1024) return showError('The file is larger than the 2 MB limit.');
+  if (selectedFile.size > 16 * 1024 * 1024) return showError('The file is larger than the 16 MB limit.');
   if (!/\.(json|ya?ml)$/i.test(selectedFile.name)) return showError('Choose a .json, .yaml, or .yml file.');
 
   submitButton.disabled = true;
@@ -189,7 +189,7 @@ async function refreshHistory() {
       historyList.innerHTML = '<div class="empty-state">Your scan reports will appear here.</div>';
       return;
     }
-    historyList.innerHTML = payload.items.map((scan) => `<div class="history-row"><button class="history-open" type="button" data-id="${escapeHtml(scan.id)}"><span class="history-name"><strong>${escapeHtml(scan.name)}</strong><small>${escapeHtml(scan.target_url)} · ${escapeHtml(new Date(scan.created_at).toLocaleString())}</small></span><span class="history-count">${escapeHtml(String(scan.summary?.findings ?? '—'))} findings</span><span class="history-status">${escapeHtml(scan.status)}</span></button><button class="history-delete" type="button" data-id="${escapeHtml(scan.id)}" aria-label="Delete ${escapeHtml(scan.name)}" ${['queued', 'running'].includes(scan.status) ? 'disabled title="Wait until the scan finishes"' : ''}>Delete</button></div>`).join('');
+    historyList.innerHTML = payload.items.map((scan) => `<div class="history-row"><button class="history-open" type="button" data-id="${escapeHtml(scan.id)}"><span class="history-name"><strong>${escapeHtml(scan.name)}</strong><small>${escapeHtml(scan.target_url)} · ${escapeHtml(new Date(scan.created_at).toLocaleString())}</small></span><span class="history-count">${escapeHtml(String(scan.summary?.findings ?? '—'))} findings</span><span class="history-status">${escapeHtml(scan.status)}</span></button><button class="history-delete" type="button" data-id="${escapeHtml(scan.id)}" aria-label="Delete ${escapeHtml(scan.name)}" title="${['queued', 'running'].includes(scan.status) ? 'Cancel and delete this scan' : 'Delete this scan'}">${['queued', 'running'].includes(scan.status) ? 'Cancel' : 'Delete'}</button></div>`).join('');
     historyList.querySelectorAll('.history-open').forEach((button) => button.addEventListener('click', () => loadScan(button.dataset.id)));
     historyList.querySelectorAll('.history-delete').forEach((button) => button.addEventListener('click', () => deleteHistoryItem(button.dataset.id)));
   } catch { /* Keep the current history visible if the network is temporarily unavailable. */ }
@@ -204,7 +204,6 @@ async function loadScan(id) {
 
 async function deleteHistoryItem(id) {
   const response = await fetch(`/api/v1/scans/${encodeURIComponent(id)}`, { method: 'DELETE' });
-  if (response.status === 409) return showError('Wait for the scan to finish before deleting it.');
   if (!response.ok && response.status !== 404) return showError('Could not delete this scan.');
   if (activeScan?.id === id) {
     activeScan = null;
@@ -216,7 +215,7 @@ async function deleteHistoryItem(id) {
 document.querySelector('#clear-history-button').addEventListener('click', async () => {
   if (!window.confirm('Delete all scan history? This cannot be undone.')) return;
   const response = await fetch('/api/v1/scans', { method: 'DELETE' });
-  if (response.status === 409) return showError('Wait for queued and running scans to finish before clearing history.');
+  if (response.status === 409) return showError('Cancel queued or running scans before clearing all history.');
   if (!response.ok) return showError('Could not clear scan history.');
   activeScan = null;
   resultSection.hidden = true;

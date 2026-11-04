@@ -1,7 +1,7 @@
 import json
 
-from app.cli import main
-from app.scanner.engine import analyze
+from api_checker.cli import main
+from api_checker.scanner.engine import analyze
 
 
 def test_operation_and_property_suppressions():

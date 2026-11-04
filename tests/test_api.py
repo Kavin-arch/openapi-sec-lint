@@ -3,7 +3,7 @@ import json
 
 from httpx import ASGITransport, AsyncClient
 
-from app.main import app
+from api_checker.main import app
 
 
 def _scan_payload(name="api test"):
@@ -12,6 +12,17 @@ def _scan_payload(name="api test"):
         "info": {"title": "API test", "version": "1"},
         "paths": {"/items": {"get": {"responses": {"200": {"description": "ok"}}}}},
     }
+
+
+def test_untrusted_host_header_is_rejected():
+    async def scenario():
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://attacker.example"
+        ) as client:
+            response = await client.get("/health")
+            assert response.status_code == 400
+
+    asyncio.run(scenario())
     return {
         "name": name,
         "target_url": "https://api.example",
@@ -36,10 +47,18 @@ def test_api_scan_exports_and_delete(monkeypatch, tmp_path):
 
     async def scenario():
         async with app.router.lifespan_context(app):
-            async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            async with AsyncClient(transport=ASGITransport(app=app), base_url="http://localhost") as client:
                 sample = await client.get("/api/v1/sample-spec")
                 assert sample.status_code == 200
+                assert sample.headers["x-content-type-options"] == "nosniff"
+                assert "default-src 'self'" in sample.headers["content-security-policy"]
                 assert "openapi" in sample.text
+                rejected = await client.post(
+                    "/api/v1/scans",
+                    content=json.dumps(_scan_payload()),
+                    headers={"Content-Type": "text/plain"},
+                )
+                assert rejected.status_code == 415
                 created = await client.post("/api/v1/scans", json=_scan_payload())
                 assert created.status_code == 202
                 scan = await _wait_for_completion(client, created.json()["id"])
@@ -65,7 +84,7 @@ def test_api_delete_all_scans(monkeypatch, tmp_path):
 
     async def scenario():
         async with app.router.lifespan_context(app):
-            async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            async with AsyncClient(transport=ASGITransport(app=app), base_url="http://localhost") as client:
                 first = (await client.post("/api/v1/scans", json=_scan_payload("one"))).json()
                 second = (await client.post("/api/v1/scans", json=_scan_payload("two"))).json()
                 await _wait_for_completion(client, first["id"])

@@ -3,8 +3,8 @@ from concurrent.futures import ThreadPoolExecutor
 
 import pytest
 
-import app.database as database_module
-from app.database import Database, ScanInProgressError
+import api_checker.database as database_module
+from api_checker.database import Database, ScanInProgressError
 
 
 def test_database_fingerprint_order_and_delete_lifecycle(tmp_path, monkeypatch):
@@ -17,10 +17,11 @@ def test_database_fingerprint_order_and_delete_lifecycle(tmp_path, monkeypatch):
     assert first["spec_sha256"] != second["spec_sha256"]
     assert [item["id"] for item in db.list_scans()] == sorted([first["id"], second["id"]], reverse=True)
     assert db.claim_next_scan()["id"] == min(first["id"], second["id"])
-    with pytest.raises(ScanInProgressError):
-        db.delete_scan(min(first["id"], second["id"]))
+    interrupted = db.claim_next_scan()["id"]
     db.initialize()  # startup recovers a scan left in running state
-    assert db.get_scan(min(first["id"], second["id"]))["status"] == "queued"
+    recovered = db.get_scan(interrupted)
+    assert recovered["status"] == "failed"
+    assert recovered["error"] == "Scan interrupted by server restart."
 
 
 def test_database_schema_version_and_upgrade_from_legacy_scans_table(tmp_path):
@@ -38,7 +39,7 @@ def test_database_schema_version_and_upgrade_from_legacy_scans_table(tmp_path):
     db = Database(str(path))
     db.initialize()
     with db.connect() as connection:
-        assert connection.execute("PRAGMA user_version").fetchone()[0] == 1
+        assert connection.execute("PRAGMA user_version").fetchone()[0] == 2
         columns = {row["name"] for row in connection.execute("PRAGMA table_info(scans)")}
         assert "spec_sha256" in columns
 

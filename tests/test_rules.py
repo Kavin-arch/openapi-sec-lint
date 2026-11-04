@@ -1,13 +1,13 @@
-from app.scanner.checks.authentication import check_authentication
-from app.scanner.checks.dangling_security_schemes import check_dangling_security_schemes
-from app.scanner.checks.oauth_scopes import check_oauth_scopes
-from app.scanner.checks.object_id_parameters import check_object_id_parameters
-from app.scanner.checks.permissive_request_objects import check_permissive_request_objects
-from app.scanner.checks.sensitive_response_fields import check_sensitive_response_fields
-from app.scanner.checks.transport import check_server_variables_and_websockets, check_transport
-from app.scanner.checks.unbounded_request_arrays import check_unbounded_request_arrays
-from app.scanner.checks.unbounded_strings_and_pagination import check_unbounded_strings_and_pagination
-from app.scanner.checks.url_input_fields import check_url_input_fields
+from api_checker.scanner.checks.authentication import check_authentication
+from api_checker.scanner.checks.dangling_security_schemes import check_dangling_security_schemes
+from api_checker.scanner.checks.oauth_scopes import check_oauth_scopes
+from api_checker.scanner.checks.object_id_parameters import check_object_id_parameters
+from api_checker.scanner.checks.permissive_request_objects import check_permissive_request_objects
+from api_checker.scanner.checks.sensitive_response_fields import check_sensitive_response_fields
+from api_checker.scanner.checks.transport import check_server_variables_and_websockets, check_transport
+from api_checker.scanner.checks.unbounded_request_arrays import check_unbounded_request_arrays
+from api_checker.scanner.checks.unbounded_strings_and_pagination import check_unbounded_strings_and_pagination
+from api_checker.scanner.checks.url_input_fields import check_url_input_fields
 
 
 def _base(paths):
@@ -44,6 +44,28 @@ def test_bola_001_flags_integer_object_id_parameter():
         }
     )
     assert "BOLA-001" == check_object_id_parameters(spec)[0].rule_id
+
+
+def test_bola_001_includes_uuid_strings_without_matching_words_ending_in_id():
+    spec = _base(
+        {
+            "/users/{userUUID}": {
+                "get": {
+                    "parameters": [
+                        {"name": "userUUID", "in": "path", "schema": {"type": "string", "format": "uuid"}}
+                    ]
+                }
+            },
+            "/payments/{paid}": {
+                "get": {
+                    "parameters": [{"name": "paid", "in": "path", "schema": {"type": "integer"}}]
+                }
+            },
+        }
+    )
+    findings = check_object_id_parameters(spec)
+    assert len(findings) == 1
+    assert findings[0].evidence["parameters"] == ["path userUUID"]
 
 
 def test_mass_001_flags_permissive_and_server_managed_fields():

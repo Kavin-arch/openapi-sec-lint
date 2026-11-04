@@ -6,6 +6,10 @@ __pycache__
 *.sqlite3
 data
 tests
+corpus
+docs
+scripts
 .mypy_cache
 .pytest_cache
 .ruff_cache
+*.egg-info
