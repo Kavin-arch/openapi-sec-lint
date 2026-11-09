@@ -12,6 +12,12 @@ def _scan_payload(name="api test"):
         "info": {"title": "API test", "version": "1"},
         "paths": {"/items": {"get": {"responses": {"200": {"description": "ok"}}}}},
     }
+    return {
+        "name": name,
+        "target_url": "https://api.example",
+        "filename": "api.yaml",
+        "spec_text": json.dumps(spec),
+    }
 
 
 def test_untrusted_host_header_is_rejected():
@@ -23,12 +29,6 @@ def test_untrusted_host_header_is_rejected():
             assert response.status_code == 400
 
     asyncio.run(scenario())
-    return {
-        "name": name,
-        "target_url": "https://api.example",
-        "filename": "api.yaml",
-        "spec_text": json.dumps(spec),
-    }
 
 
 async def _wait_for_completion(client, scan_id):

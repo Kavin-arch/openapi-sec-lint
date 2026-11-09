@@ -14,7 +14,7 @@ signals, not confirmation of runtime vulnerabilities.
 | `AUTH-003` | OAuth flows without documented scopes or operations selecting no scopes | Medium |
 | `BOLA-001` | Integer or string object identifier parameters | Low |
 | `MASS-001` | Write schemas that permit undeclared fields or omit `readOnly` on likely server-managed fields | Low |
-| `TRANSPORT-001` | Declared plain HTTP servers | High |
+| `TRANSPORT-001` | Declared plain HTTP servers | Medium |
 | `TRANSPORT-002` | Server templates that permit HTTP or `ws://` | Medium |
 | `DATA-001` | Sensitive-looking response field names | Medium |
 | `RESOURCE-001` | Request arrays without `maxItems` | Medium |
@@ -68,6 +68,7 @@ standard input, including multiple inputs:
 openapi-sec-lint --version
 openapi-sec-lint scan examples/sample-openapi.yaml --fail-on medium --format sarif
 openapi-sec-lint scan specs/ --disable MASS-001 --output report.json
+openapi-sec-lint scan specs/ --min-severity medium --format md
 Get-Content .\api.yaml | openapi-sec-lint scan - --format md
 ```
 
@@ -78,12 +79,16 @@ config can set defaults:
 ```toml
 format = "sarif"
 fail_on = "high"
+min_severity = "medium"
 disable = ["MASS-001", "RESOURCE-002"]
 ```
 
-Use `--baseline baseline.json` to report only new findings by fingerprint and
-`--write-baseline baseline.json` to save the current finding set. Every input
-is limited to 16 MiB, matching the web API limit.
+Use `--baseline baseline.json` to report only new findings and
+`--write-baseline baseline.json` to save the current finding set. Baselines
+written by this version key fingerprints by input path; older fingerprint-only
+baselines remain supported. `--min-severity` reduces report volume without
+changing the scanner's rule set. Every input is limited to 16 MiB, matching the
+web API limit.
 
 ## API
 

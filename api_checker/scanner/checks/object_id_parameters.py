@@ -4,6 +4,7 @@ from typing import Any
 from api_checker.scanner.common import (
     _operation_entries_with_pointers,
     _operation_name,
+    _swagger_parameter_schema,
     iter_parameters,
     location,
 )
@@ -18,6 +19,10 @@ def check_object_id_parameters(spec: dict[str, Any]) -> list[Finding]:
         for parameter, parameter_pointer in iter_parameters(spec, path_item, operation, operation_pointer):
             name = parameter.get("name")
             schema = parameter.get("schema")
+            schema_pointer = pointer_join(parameter_pointer, "schema")
+            if not isinstance(schema, dict) and spec.get("swagger") == "2.0":
+                schema = _swagger_parameter_schema(parameter)
+                schema_pointer = parameter_pointer
             if parameter.get("in") not in {"path", "query"}:
                 continue
             if not isinstance(name, str) or not isinstance(schema, dict):
@@ -28,9 +33,8 @@ def check_object_id_parameters(spec: dict[str, Any]) -> list[Finding]:
                 continue
             if schema.get("type") not in ("integer", "string") and schema.get("format") != "uuid":
                 continue
-            pointer = pointer_join(parameter_pointer, "schema")
             matches.append(
-                (operation_name, name, pointer_fragment(pointer), parameter.get("in", "parameter"))
+                (operation_name, name, pointer_fragment(schema_pointer), parameter.get("in", "parameter"))
             )
 
     if not matches:

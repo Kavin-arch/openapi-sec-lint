@@ -3,6 +3,7 @@ from typing import Any
 from api_checker.scanner.common import (
     _operation_entries_with_pointers,
     _operation_name,
+    _swagger_parameter_schema,
     _walk_schema_locations,
     iter_parameters,
     iter_request_schemas,
@@ -74,8 +75,12 @@ def check_url_input_fields(spec: dict[str, Any]) -> list[Finding]:
         for parameter, parameter_pointer in iter_parameters(spec, path_item, operation, operation_pointer):
             name = parameter.get("name", "")
             parameter_schema = parameter.get("schema")
+            schema_pointer = pointer_join(parameter_pointer, "schema")
+            if not isinstance(parameter_schema, dict) and spec.get("swagger") == "2.0":
+                parameter_schema = _swagger_parameter_schema(parameter)
+                schema_pointer = parameter_pointer
             if isinstance(parameter_schema, dict):
-                inspect(parameter_schema, pointer_join(parameter_pointer, "schema"), str(name))
+                inspect(parameter_schema, schema_pointer, str(name))
             content = parameter.get("content", {})
             if isinstance(content, dict):
                 for media_type, media in content.items():

@@ -1,0 +1,85 @@
+openapi: 3.0.3
+info:
+  title: Sample Store API
+  version: 1.0.0
+servers:
+  - url: http://api.example.test/v1
+
+paths:
+  /users/{userId}:
+    get:
+      summary: Get a user
+      parameters:
+        - name: userId
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: User details
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  id:
+                    type: integer
+                  access_token:
+                    type: string
+
+  /users:
+    get:
+      summary: List users
+      responses:
+        "200":
+          description: User list
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    id:
+                      type: integer
+                    password_hash:
+                      type: string
+
+    post:
+      summary: Create a user
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                username:
+                  type: string
+                role:
+                  type: string
+                tags:
+                  type: array
+                  items:
+                    type: string
+      responses:
+        "201":
+          description: User created
+
+  /webhooks:
+    post:
+      summary: Register a webhook
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                callback_url:
+                  type: string
+                  format: uri
+      responses:
+        "201":
+          description: Webhook registered

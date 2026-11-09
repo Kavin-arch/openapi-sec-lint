@@ -8,6 +8,8 @@ const historyList = document.querySelector('#history-list');
 const findingsList = document.querySelector('#findings-list');
 let selectedFile = null;
 let activeScan = null;
+let findingPage = 0;
+const FINDINGS_PER_PAGE = 50;
 
 fileInput.addEventListener('change', () => {
   selectedFile = fileInput.files?.[0] || null;
@@ -109,6 +111,7 @@ async function pollScan(id) {
 }
 
 function renderScan(scan) {
+  if (activeScan?.id !== scan.id) findingPage = 0;
   activeScan = scan;
   resultSection.hidden = false;
   document.querySelector('#result-title').textContent = scan.name;
@@ -137,7 +140,10 @@ function renderScan(scan) {
 }
 
 function renderFindings(findings) {
+  const pagination = document.querySelector('#finding-pagination');
   if (!findings.length) {
+    pagination.hidden = true;
+    pagination.replaceChildren();
     findingsList.innerHTML = activeScan?.status === 'completed'
       ? '<div class="empty-findings">No findings from the included checks. This does not establish that the live API is secure.</div>'
       : '';
@@ -155,10 +161,16 @@ function renderFindings(findings) {
     return true;
   });
   if (!filtered.length) {
+    pagination.hidden = true;
+    pagination.replaceChildren();
     findingsList.innerHTML = '<div class="empty-findings">No findings match these filters.</div>';
     return;
   }
-  findingsList.innerHTML = filtered.map((finding) => {
+  const pageCount = Math.ceil(filtered.length / FINDINGS_PER_PAGE);
+  findingPage = Math.max(0, Math.min(findingPage, pageCount - 1));
+  const start = findingPage * FINDINGS_PER_PAGE;
+  const pageFindings = filtered.slice(start, start + FINDINGS_PER_PAGE);
+  findingsList.innerHTML = pageFindings.map((finding) => {
     const ops = finding.affected_operations?.length ? `<div class="operations">${finding.affected_operations.map(escapeHtml).join('<br>')}</div>` : '';
     const evidence = finding.evidence || {};
     const details = evidence.servers || evidence.schema_fields || evidence.fields || evidence.issues || evidence.parameters;
@@ -173,11 +185,29 @@ function renderFindings(findings) {
     }
     return `<article class="finding"><div class="finding-top"><span class="severity ${escapeHtml(finding.severity)}">${escapeHtml(finding.severity)}</span><span class="rule-id">${escapeHtml(finding.rule_id)}</span><span class="confidence">${escapeHtml(finding.confidence)} confidence</span></div><h3>${escapeHtml(finding.title)}</h3><p>${escapeHtml(finding.summary)}</p><p><strong>Potential impact:</strong> ${escapeHtml(finding.impact)}</p><p class="remediation"><strong>Suggested review:</strong> ${escapeHtml(finding.remediation)}</p>${truncation}${ops}${evidenceHtml}${pointerHtml}</article>`;
   }).join('');
+  pagination.hidden = filtered.length <= FINDINGS_PER_PAGE;
+  pagination.replaceChildren();
+  if (filtered.length > FINDINGS_PER_PAGE) {
+    const summary = document.createElement('span');
+    summary.textContent = `Showing ${start + 1}–${Math.min(start + FINDINGS_PER_PAGE, filtered.length)} of ${filtered.length} findings`;
+    const previous = document.createElement('button');
+    previous.type = 'button';
+    previous.textContent = 'Previous';
+    previous.disabled = findingPage === 0;
+    previous.addEventListener('click', () => { findingPage -= 1; renderFindings(activeScan?.findings || []); });
+    const next = document.createElement('button');
+    next.type = 'button';
+    next.textContent = 'Next';
+    next.disabled = findingPage >= pageCount - 1;
+    next.addEventListener('click', () => { findingPage += 1; renderFindings(activeScan?.findings || []); });
+    pagination.append(summary, previous, next);
+  }
 }
 
 for (const id of ['filter-severity', 'filter-confidence', 'filter-rule', 'filter-endpoint']) {
-  document.querySelector(`#${id}`).addEventListener('input', () => renderFindings(activeScan?.findings || []));
-  document.querySelector(`#${id}`).addEventListener('change', () => renderFindings(activeScan?.findings || []));
+  const applyFilter = () => { findingPage = 0; renderFindings(activeScan?.findings || []); };
+  document.querySelector(`#${id}`).addEventListener('input', applyFilter);
+  document.querySelector(`#${id}`).addEventListener('change', applyFilter);
 }
 
 async function refreshHistory() {

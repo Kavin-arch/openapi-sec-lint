@@ -2,7 +2,9 @@ import asyncio
 import json
 import logging
 import os
+import subprocess
 import sys
+import threading
 from typing import Any
 
 from api_checker.database import Database
@@ -23,7 +25,8 @@ class ScanWorker:
         self._wake = asyncio.Event()
         self._task: asyncio.Task[None] | None = None
         self._current_scan_id: str | None = None
-        self._current_process: asyncio.subprocess.Process | None = None
+        self._current_process: subprocess.Popen[bytes] | None = None
+        self._cancel_process = threading.Event()
         self._current_job_task: asyncio.Task[tuple[list[dict[str, Any]], dict[str, int]]] | None = None
         self._cancelled_scan_id: str | None = None
 
@@ -33,6 +36,7 @@ class ScanWorker:
 
     async def stop(self) -> None:
         if self._task is not None:
+            self._cancel_process.set()
             self._task.cancel()
             try:
                 await self._task
@@ -48,8 +52,9 @@ class ScanWorker:
         if self._current_scan_id != scan_id:
             return
         self._cancelled_scan_id = scan_id
+        self._cancel_process.set()
         process = self._current_process
-        if process is not None and process.returncode is None:
+        if process is not None and process.poll() is None:
             process.kill()
         job_task = self._current_job_task
         if job_task is not None and not job_task.done():
@@ -62,40 +67,52 @@ class ScanWorker:
     async def _analyze_in_process(
         self, scan_id: str, source: str, filename: str | None
     ) -> tuple[list[dict[str, Any]], dict[str, int]]:
-        process = await asyncio.create_subprocess_exec(
-            sys.executable,
-            "-m",
-            "api_checker.scan_process",
-            stdin=asyncio.subprocess.PIPE,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-        )
-        self._current_process = process
         request = json.dumps({"source": source, "filename": filename}).encode("utf-8")
+        process_task = asyncio.create_task(asyncio.to_thread(self._run_analysis_process, request))
         try:
-            stdout, stderr = await asyncio.wait_for(
-                process.communicate(request), timeout=SCAN_TIMEOUT_SECONDS
-            )
-        except TimeoutError as exc:
-            process.kill()
-            await process.wait()
-            raise ScanTimeoutError(
-                f"Scan exceeded the {SCAN_TIMEOUT_SECONDS}-second time limit."
-            ) from exc
+            stdout, stderr, returncode = await asyncio.shield(process_task)
         except asyncio.CancelledError:
-            if process.returncode is None:
+            self._cancel_process.set()
+            process = self._current_process
+            if process is not None and process.poll() is None:
                 process.kill()
-                await process.wait()
+            try:
+                await process_task
+            except Exception:
+                pass
             raise
-        finally:
-            self._current_process = None
-        if process.returncode != 0:
+        if returncode != 0:
             detail = stderr.decode("utf-8", errors="replace")[:300]
-            raise RuntimeError(f"Analysis process exited unexpectedly ({process.returncode}). {detail}")
+            raise RuntimeError(f"Analysis process exited unexpectedly ({returncode}). {detail}")
         result = json.loads(stdout)
         if result.get("error"):
             raise ValueError(result["error"])
         return result["findings"], result["summary"]
+
+    def _run_analysis_process(self, request: bytes) -> tuple[bytes, bytes, int]:
+        """Run analysis outside the event loop for Windows loop compatibility."""
+        process = subprocess.Popen(
+            [sys.executable, "-m", "api_checker.scan_process"],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+        self._current_process = process
+        try:
+            if self._cancel_process.is_set():
+                process.kill()
+            try:
+                stdout, stderr = process.communicate(request, timeout=SCAN_TIMEOUT_SECONDS)
+            except subprocess.TimeoutExpired as exc:
+                process.kill()
+                stdout, stderr = process.communicate()
+                raise ScanTimeoutError(
+                    f"Scan exceeded the {SCAN_TIMEOUT_SECONDS}-second time limit."
+                ) from exc
+            return stdout, stderr, process.returncode if process.returncode is not None else -1
+        finally:
+            if self._current_process is process:
+                self._current_process = None
 
     async def _run(self) -> None:
         while True:
@@ -108,6 +125,7 @@ class ScanWorker:
                     pass
                 continue
 
+            self._cancel_process.clear()
             self._current_scan_id = job["id"]
             self._current_job_task = asyncio.create_task(
                 self._analyze_in_process(
@@ -127,4 +145,5 @@ class ScanWorker:
                 self._current_scan_id = None
                 self._current_job_task = None
                 self._current_process = None
+                self._cancel_process.clear()
                 self._cancelled_scan_id = None

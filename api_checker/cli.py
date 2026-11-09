@@ -35,6 +35,11 @@ def _build_parser() -> argparse.ArgumentParser:
         choices=SEVERITIES,
         help="exit 1 when a finding at this severity or higher is present",
     )
+    scan.add_argument(
+        "--min-severity",
+        choices=SEVERITIES,
+        help="hide findings below this severity in reports (for example, medium)",
+    )
     scan.add_argument("--format", choices=("json", "sarif", "md"), help="report format")
     scan.add_argument("--output", type=Path, help="write the report to a file instead of stdout")
     scan.add_argument(
@@ -76,14 +81,24 @@ def _input_paths(values: list[str]) -> list[Path]:
     return paths
 
 
-def _baseline_fingerprints(path: Path | None) -> set[str]:
+def _baseline_fingerprints(path: Path | None) -> tuple[set[str], dict[str, set[str]]]:
     if path is None:
-        return set()
+        return set(), {}
     value = json.loads(path.read_text(encoding="utf-8"))
+    if isinstance(value, dict) and value.get("version") == 2:
+        artifacts = value.get("artifacts", {})
+        if not isinstance(artifacts, dict) or any(
+            not isinstance(uri, str)
+            or not isinstance(items, list)
+            or not all(isinstance(item, str) for item in items)
+            for uri, items in artifacts.items()
+        ):
+            raise ValueError("The baseline artifacts must map input paths to fingerprint lists.")
+        return set(), {uri: set(items) for uri, items in artifacts.items()}
     fingerprints = value.get("fingerprints", []) if isinstance(value, dict) else value
     if not isinstance(fingerprints, list) or not all(isinstance(item, str) for item in fingerprints):
         raise ValueError("The baseline must contain a list of finding fingerprints.")
-    return set(fingerprints)
+    return set(fingerprints), {}
 
 
 def _recount(findings: list[dict[str, Any]], summary: dict[str, int]) -> dict[str, int]:
@@ -113,7 +128,7 @@ def _scan_one(
         try:
             uri = path.resolve().relative_to(Path.cwd().resolve()).as_posix()
         except ValueError:
-            uri = path.name
+            uri = path.resolve().as_posix()
     request = json.dumps(
         {"source": source, "filename": filename, "disabled_rules": sorted(disabled)}
     )
@@ -174,6 +189,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         fail_on = args.fail_on or config.get("fail_on")
         if fail_on is not None and fail_on not in SEVERITIES:
             raise ValueError("Config fail_on must be a supported severity.")
+        min_severity = args.min_severity or config.get("min_severity")
+        if min_severity is not None and min_severity not in SEVERITIES:
+            raise ValueError("Config min_severity must be a supported severity.")
 
         input_paths = _input_paths(args.spec)
         stdin_count = args.spec.count("-")
@@ -184,19 +202,30 @@ def main(argv: Sequence[str] | None = None) -> int:
             raise ValueError("No JSON or YAML specification files were found.")
 
         scans = [_scan_one(value, disabled) for value in input_values]
-        fingerprints = sorted(
-            finding["fingerprint"] for scan in scans for finding in scan["findings"]
-        )
-        if args.write_baseline:
-            args.write_baseline.write_text(
-                json.dumps({"version": 1, "fingerprints": fingerprints}, indent=2) + "\n",
-                encoding="utf-8",
-            )
-        baseline = _baseline_fingerprints(args.baseline)
-        if baseline:
+        if min_severity:
+            threshold = SEVERITIES.index(min_severity)
             for scan in scans:
                 scan["findings"] = [
-                    finding for finding in scan["findings"] if finding["fingerprint"] not in baseline
+                    finding
+                    for finding in scan["findings"]
+                    if SEVERITIES.index(finding["severity"]) <= threshold
+                ]
+                scan["summary"] = _recount(scan["findings"], scan["summary"])
+        artifact_fingerprints = {
+            scan["spec_filename"]: sorted(finding["fingerprint"] for finding in scan["findings"])
+            for scan in scans
+        }
+        if args.write_baseline:
+            args.write_baseline.write_text(
+                json.dumps({"version": 2, "artifacts": artifact_fingerprints}, indent=2) + "\n",
+                encoding="utf-8",
+            )
+        baseline, artifact_baseline = _baseline_fingerprints(args.baseline)
+        if baseline or artifact_baseline:
+            for scan in scans:
+                known = baseline | artifact_baseline.get(scan["spec_filename"], set())
+                scan["findings"] = [
+                    finding for finding in scan["findings"] if finding["fingerprint"] not in known
                 ]
                 scan["summary"] = _recount(scan["findings"], scan["summary"])
 

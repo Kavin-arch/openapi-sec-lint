@@ -1,6 +1,6 @@
 import logging
 import os
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -10,7 +10,6 @@ from fastapi.staticfiles import StaticFiles
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 from starlette.requests import Request
 from starlette.responses import Response
-from starlette.types import RequestResponseEndpoint
 
 from api_checker import __version__
 from api_checker.api import router
@@ -53,7 +52,9 @@ app.add_middleware(TrustedHostMiddleware, allowed_hosts=_allowed_hosts())
 
 
 @app.middleware("http")
-async def add_security_headers(request: Request, call_next: RequestResponseEndpoint) -> Response:
+async def add_security_headers(
+    request: Request, call_next: Callable[[Request], Awaitable[Response]]
+) -> Response:
     response = await call_next(request)
     response.headers.setdefault("X-Content-Type-Options", "nosniff")
     response.headers.setdefault("X-Frame-Options", "DENY")

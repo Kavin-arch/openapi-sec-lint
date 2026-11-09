@@ -313,14 +313,29 @@ def iter_request_schemas(
         for index, raw_parameter in enumerate(parameters):
             parameter_pointer = pointer_join(source_pointer, index)
             parameter, actual_pointer = resolve_local_ref_with_pointer(spec, raw_parameter, parameter_pointer)
-            if not isinstance(parameter, dict) or not isinstance(parameter.get("schema"), dict):
+            if not isinstance(parameter, dict):
                 continue
             if parameter_locations is not None and parameter.get("in") not in parameter_locations:
                 continue
-            # Swagger 2.0 body parameters and OpenAPI parameter schemas are
-            # both useful request inputs to the checks.
-            schema_pointer = pointer_join(actual_pointer, "schema")
-            yield parameter["schema"], schema_pointer
+            schema = parameter.get("schema")
+            if isinstance(schema, dict):
+                yield schema, pointer_join(actual_pointer, "schema")
+            elif spec.get("swagger") == "2.0" and parameter.get("in") != "body":
+                # Swagger 2.0 Parameter Objects put schema keywords directly
+                # on the parameter rather than under a `schema` member.
+                projected = _swagger_parameter_schema(parameter)
+                if projected:
+                    yield projected, actual_pointer
+
+
+def _swagger_parameter_schema(parameter: dict[str, Any]) -> dict[str, Any]:
+    """Project a Swagger 2.0 non-body parameter into JSON Schema shape."""
+    keywords = (
+        "type", "format", "items", "enum", "default", "minimum", "maximum",
+        "exclusiveMinimum", "exclusiveMaximum", "minLength", "maxLength", "pattern",
+        "minItems", "maxItems", "uniqueItems", "multipleOf",
+    )
+    return {key: parameter[key] for key in keywords if key in parameter}
 
 
 def iter_response_schemas(
