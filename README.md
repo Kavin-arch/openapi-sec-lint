@@ -66,7 +66,7 @@ standard input, including multiple inputs:
 
 ```powershell
 openapi-sec-lint --version
-openapi-sec-lint scan examples/sample-openapi.yaml --fail-on medium --format sarif
+openapi-sec-lint scan api_checker/examples/sample-openapi.yaml --fail-on medium --format sarif
 openapi-sec-lint scan specs/ --disable MASS-001 --output report.json
 openapi-sec-lint scan specs/ --min-severity medium --format md
 Get-Content .\api.yaml | openapi-sec-lint scan - --format md

@@ -27,8 +27,8 @@ def check_object_id_parameters(spec: dict[str, Any]) -> list[Finding]:
                 continue
             if not isinstance(name, str) or not isinstance(schema, dict):
                 continue
-            words = re.sub(r"([a-z0-9])([A-Z])", r"\1_\2", name)
-            words = [word for word in re.split(r"[^A-Za-z0-9]+", words.lower()) if word]
+            normalized_name = re.sub(r"([a-z0-9])([A-Z])", r"\1_\2", name)
+            words = [word for word in re.split(r"[^A-Za-z0-9]+", normalized_name.lower()) if word]
             if not words or words[-1] not in {"id", "uuid", "identifier"}:
                 continue
             if schema.get("type") not in ("integer", "string") and schema.get("format") != "uuid":

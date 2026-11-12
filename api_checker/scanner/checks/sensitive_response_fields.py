@@ -112,11 +112,11 @@ def _sensitive_fields(
         return []
     cached = cache.get(identity)
     if cached is not None:
-        _, source_trail, source_pointer, matches = cached
+        _, source_trail, source_pointer, cached_matches = cached
         check_schema_time()
         return [
             (_rebase_trail(field_path, source_trail, trail), _rebase_pointer(field_pointer, source_pointer, resolved_pointer))
-            for field_path, field_pointer in matches
+            for field_path, field_pointer in cached_matches
         ]
 
     visit_schema_node()

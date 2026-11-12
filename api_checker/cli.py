@@ -6,7 +6,7 @@ import argparse
 import hashlib
 import json
 import os
-import subprocess
+import subprocess  # nosec B404
 import sys
 import tomllib
 from collections.abc import Sequence
@@ -61,7 +61,15 @@ def _config_options(path: Path | None) -> dict[str, Any]:
         value = tomllib.loads(content)
     if not isinstance(value, dict):
         raise ValueError("The config file must contain an object/table.")
-    return value.get("tool", {}).get("openapi-sec-lint", value)
+    tool_options = value.get("tool")
+    if tool_options is None:
+        return value
+    if not isinstance(tool_options, dict):
+        raise ValueError("Config 'tool' must be an object/table.")
+    options = tool_options.get("openapi-sec-lint", value)
+    if not isinstance(options, dict):
+        raise ValueError("Config 'tool.openapi-sec-lint' must be an object/table.")
+    return options
 
 
 def _input_paths(values: list[str]) -> list[Path]:
@@ -133,7 +141,8 @@ def _scan_one(
         {"source": source, "filename": filename, "disabled_rules": sorted(disabled)}
     )
     try:
-        completed = subprocess.run(
+        # The specification is supplied over stdin and is never part of the command.
+        completed = subprocess.run(  # nosec B603
             [sys.executable, "-m", "api_checker.scan_process"],
             input=request,
             text=True,

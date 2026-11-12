@@ -73,7 +73,8 @@ def _parse_document(source: str, filename: str | None = None) -> Any:
             # documents that begin with a brace but are not strict JSON. Large
             # files without a YAML extension avoid a potentially slow fallback.
             pass
-    return yaml.load(source, Loader=_UniqueKeySafeLoader)
+    # This custom loader is based on SafeLoader and rejects Python object tags.
+    return yaml.load(source, Loader=_UniqueKeySafeLoader)  # nosec B506
 
 
 def source_line_map(source: str) -> dict[str, int]:

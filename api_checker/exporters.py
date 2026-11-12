@@ -6,6 +6,7 @@ from typing import Any
 
 from api_checker import __version__
 
+
 def to_sarif(scan: dict[str, Any]) -> dict[str, Any]:
     findings = scan.get("findings", [])
     rules: dict[str, dict[str, Any]] = {}

@@ -2,7 +2,7 @@ import asyncio
 import json
 import logging
 import os
-import subprocess
+import subprocess  # nosec B404
 import sys
 import threading
 from typing import Any
@@ -78,8 +78,8 @@ class ScanWorker:
                 process.kill()
             try:
                 await process_task
-            except Exception:
-                pass
+            except Exception as cleanup_error:
+                logger.debug("Analysis subprocess cleanup raised %s", type(cleanup_error).__name__)
             raise
         if returncode != 0:
             detail = stderr.decode("utf-8", errors="replace")[:300]
@@ -91,7 +91,8 @@ class ScanWorker:
 
     def _run_analysis_process(self, request: bytes) -> tuple[bytes, bytes, int]:
         """Run analysis outside the event loop for Windows loop compatibility."""
-        process = subprocess.Popen(
+        # User-controlled specification text is sent through stdin, never as a command argument.
+        process = subprocess.Popen(  # nosec B603
             [sys.executable, "-m", "api_checker.scan_process"],
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
