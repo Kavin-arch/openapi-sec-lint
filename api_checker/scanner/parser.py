@@ -1,6 +1,9 @@
 import json
 import re
+from datetime import date
+from pathlib import Path
 from typing import Any, cast
+from urllib.parse import unquote, urlsplit
 
 import yaml
 from yaml.nodes import MappingNode, ScalarNode, SequenceNode
@@ -9,6 +12,8 @@ from api_checker.scanner.common import _openapi_31_or_later
 from api_checker.scanner.references import pointer_fragment, pointer_join, resolve_local_ref
 
 MAX_SPEC_BYTES = 16 * 1024 * 1024
+MAX_REFERENCE_FILES = 100
+MAX_REFERENCE_BYTES = 64 * 1024 * 1024
 
 
 class SpecError(ValueError):
@@ -77,6 +82,105 @@ def _parse_document(source: str, filename: str | None = None) -> Any:
     return yaml.load(source, Loader=_UniqueKeySafeLoader)  # nosec B506
 
 
+def _reference_pointer(relative_path: str) -> str:
+    return pointer_join("/x-security-lint-ref-documents", relative_path)
+
+
+def _bundle_file_references(
+    document: dict[str, Any], source_path: Path | None, reference_root: Path | None
+) -> dict[str, Any]:
+    """Bundle relative file references below the top-level spec directory."""
+    external_documents: dict[str, Any] = {}
+    processed: set[str] = set()
+    total_bytes = 0
+    root_dir = reference_root.resolve() if reference_root is not None else None
+
+    def document_key(path: Path) -> str:
+        if root_dir is None:
+            raise SpecError("Relative file references require scanning a file from the CLI.")
+        return path.relative_to(root_dir).as_posix()
+
+    def resolve_file(reference: str, current_path: Path | None) -> tuple[Path, str]:
+        parsed = urlsplit(reference)
+        if parsed.scheme or parsed.netloc or parsed.query:
+            raise SpecError("Only relative local-file $ref values are supported.")
+        decoded_path = unquote(parsed.path)
+        if not decoded_path or "\\" in decoded_path or Path(decoded_path).is_absolute():
+            raise SpecError("File references must use relative paths under the top-level spec directory.")
+        if root_dir is None or source_path is None:
+            raise SpecError("Relative file references require scanning a file from the CLI.")
+        parent = current_path.parent if current_path is not None else root_dir
+        try:
+            resolved_path = (parent / decoded_path).resolve(strict=True)
+            resolved_path.relative_to(root_dir)
+        except (OSError, ValueError) as exc:
+            raise SpecError("A referenced file is missing or escapes the top-level spec directory.") from exc
+        if not resolved_path.is_file():
+            raise SpecError("A referenced file is not a regular file.")
+        return resolved_path, parsed.fragment
+
+    def ensure_document(path: Path) -> str:
+        nonlocal total_bytes
+        key = document_key(path)
+        if key in external_documents:
+            return key
+        if len(external_documents) >= MAX_REFERENCE_FILES:
+            raise SpecError(f"A spec may reference at most {MAX_REFERENCE_FILES} external files.")
+        try:
+            raw_bytes = path.read_bytes()
+        except OSError as exc:
+            raise SpecError("A referenced file could not be read.") from exc
+        total_bytes += len(raw_bytes)
+        if total_bytes > MAX_REFERENCE_BYTES:
+            raise SpecError("The total size of referenced files exceeds 64 MiB.")
+        try:
+            source = raw_bytes.decode("utf-8-sig")
+            parsed = _parse_document(source, path.name)
+        except (UnicodeError, DuplicateKeyError, json.JSONDecodeError, yaml.YAMLError, RecursionError) as exc:
+            raise SpecError(f"Could not parse referenced file '{key}'.") from exc
+        if not isinstance(parsed, dict | list):
+            raise SpecError(f"Referenced file '{key}' must contain an object or array.")
+        external_documents[key] = parsed
+        return key
+
+    def rewrite(value: Any, current_path: Path | None) -> None:
+        if isinstance(value, dict):
+            reference = value.get("$ref")
+            if isinstance(reference, str):
+                if current_path is None and not reference.startswith("#"):
+                    target_path, fragment = resolve_file(reference, current_path)
+                    key = ensure_document(target_path)
+                    value["$ref"] = f"#{_reference_pointer(key)}"
+                    if fragment:
+                        value["$ref"] += f"/{fragment.lstrip('/')}"
+                elif current_path is not None:
+                    if reference.startswith("#"):
+                        value["$ref"] = f"#{_reference_pointer(document_key(current_path))}{reference[1:]}"
+                    else:
+                        target_path, fragment = resolve_file(reference, current_path)
+                        key = ensure_document(target_path)
+                        value["$ref"] = f"#{_reference_pointer(key)}"
+                        if fragment:
+                            value["$ref"] += f"/{fragment.lstrip('/')}"
+            for child in value.values():
+                rewrite(child, current_path)
+        elif isinstance(value, list):
+            for child in value:
+                rewrite(child, current_path)
+
+    rewrite(document, None)
+    while True:
+        pending = [key for key in external_documents if key not in processed]
+        if not pending:
+            break
+        for key in pending:
+            processed.add(key)
+            rewrite(external_documents[key], root_dir / Path(key) if root_dir is not None else None)
+    if external_documents:
+        document["x-security-lint-ref-documents"] = external_documents
+    return document
+
+
 def source_line_map(source: str) -> dict[str, int]:
     """Map JSON Pointer fragments to source lines for JSON and YAML inputs."""
     try:
@@ -143,7 +247,56 @@ def _validate_operation_security(spec: dict[str, Any], items: dict[str, Any]) ->
                 raise SpecError("Operation security fields must be arrays of Security Requirement Objects.")
 
 
-def parse_spec(source: str, filename: str | None = None) -> dict[str, Any]:
+def _validate_suppression_records(document: dict[str, Any]) -> None:
+    pending: list[Any] = [document]
+    seen: set[int] = set()
+    while pending:
+        value = pending.pop()
+        if isinstance(value, dict):
+            identity = id(value)
+            if identity in seen:
+                continue
+            seen.add(identity)
+            if "x-security-ignore" in value:
+                records = value["x-security-ignore"]
+                if not isinstance(records, list) or not records:
+                    raise SpecError("x-security-ignore must be a non-empty list of suppression records.")
+                for record in records:
+                    if not isinstance(record, dict):
+                        raise SpecError("Each x-security-ignore record must be an object.")
+                    rule_id = record.get("rule_id")
+                    reason = record.get("reason")
+                    expires = record.get("expires")
+                    if not isinstance(rule_id, str) or not re.fullmatch(r"[A-Z][A-Z0-9]+-\d{3}", rule_id):
+                        raise SpecError("Each suppression record requires a valid rule_id.")
+                    if not isinstance(reason, str) or not reason.strip():
+                        raise SpecError("Each suppression record requires a non-empty reason.")
+                    if expires is not None:
+                        if type(expires) is not date:
+                            if not isinstance(expires, str) or not re.fullmatch(r"\d{4}-\d{2}-\d{2}", expires):
+                                raise SpecError("Suppression expires must be an ISO date (YYYY-MM-DD).")
+                            try:
+                                date.fromisoformat(expires)
+                            except ValueError as exc:
+                                raise SpecError("Suppression expires must be an ISO date (YYYY-MM-DD).") from exc
+                    if set(record) - {"rule_id", "reason", "expires"}:
+                        raise SpecError("Suppression records may contain only rule_id, reason, and expires.")
+            pending.extend(value.values())
+        elif isinstance(value, list):
+            identity = id(value)
+            if identity in seen:
+                continue
+            seen.add(identity)
+            pending.extend(value)
+
+
+def parse_spec(
+    source: str,
+    filename: str | None = None,
+    *,
+    source_path: str | Path | None = None,
+    reference_root: str | Path | None = None,
+) -> dict[str, Any]:
     if len(source.encode("utf-8")) > MAX_SPEC_BYTES:
         raise SpecError("Specifications are limited to 16 MB.")
     try:
@@ -159,6 +312,13 @@ def parse_spec(source: str, filename: str | None = None) -> dict[str, Any]:
 
     if not isinstance(document, dict):
         raise SpecError("The API definition must be a JSON or YAML object.")
+
+    document = _bundle_file_references(
+        document,
+        Path(source_path) if source_path is not None else None,
+        Path(reference_root) if reference_root is not None else None,
+    )
+    _validate_suppression_records(document)
 
     version = document.get("openapi")
     swagger = document.get("swagger")

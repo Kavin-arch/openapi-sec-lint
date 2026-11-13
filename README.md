@@ -26,11 +26,24 @@ Top 10/CWE mappings. `MASS-001` and `RESOURCE-002` are low severity because
 these contract signals are especially noisy. Use `--disable RULE-ID` to turn
 off checks that do not fit your API.
 
-Local JSON Pointer `$ref` references are followed; external references are
-never fetched. Findings are emitted per location and include stable
-fingerprints. `x-security-ignore: ["RULE-ID"]` on an operation suppresses that
-rule for the operation; on a schema property it suppresses findings at that
-property and below it.
+Local JSON Pointer `$ref` references are followed. The CLI also resolves
+relative file references under the directory containing the root spec; URL
+references, parent-directory escapes, symlink escapes, and missing files are
+rejected. Referenced files are capped at 100 files and 64 MiB combined. The web
+upload accepts inline specs only because it has no local reference directory.
+Findings are emitted per location and include stable fingerprints.
+`x-security-ignore` records require a rule ID and review reason, with an
+optional expiry date. Expired records are ignored:
+
+```yaml
+x-security-ignore:
+  - rule_id: SSRF-001
+    reason: "The gateway validates this destination against the allowlist."
+    expires: "2027-06-30"
+```
+
+Place the extension on an operation to suppress that rule for the operation,
+or on a schema property to suppress findings at that property and below it.
 
 ## Install and run
 
@@ -69,12 +82,22 @@ openapi-sec-lint --version
 openapi-sec-lint scan api_checker/examples/sample-openapi.yaml --fail-on medium --format sarif
 openapi-sec-lint scan specs/ --disable MASS-001 --output report.json
 openapi-sec-lint scan specs/ --min-severity medium --format md
+openapi-sec-lint diff old.yaml new.yaml --format md
+openapi-sec-lint surface api.yaml --format md
+openapi-sec-lint scan api.yaml --format curl --output test-candidates.sh
 Get-Content .\api.yaml | openapi-sec-lint scan - --format md
 ```
 
-Formats are `json`, `sarif`, and `md`. `--output PATH` writes the report to a
-file. `--disable RULE-ID` may be repeated or accept comma-separated IDs. A TOML
-config can set defaults:
+`scan` formats are `json`, `sarif`, `md`, and `curl`. Curl output is a manual
+test-plan script assembled from affected operations; generating it sends no
+requests. Review each case, replace path placeholders, and add test credentials
+locally before running it. `diff` compares findings and operation security
+between two specs, including removed authentication, loosened OAuth scopes, and
+new unauthenticated endpoints. `surface` lists unauthenticated operations,
+writes, upload routes, URL-accepting routes, and admin-looking paths. These
+reports are static signals and may need review. `--output PATH` writes a report
+to a file. `--disable RULE-ID` may be repeated or accept comma-separated IDs. A TOML
+config can set scan defaults:
 
 ```toml
 format = "sarif"

@@ -134,11 +134,18 @@ def _one_finding_per_location(findings: list[dict[str, Any]]) -> list[dict[str, 
 
 
 def analyze(
-    source: str, filename: str | None = None, disabled_rules: set[str] | None = None
+    source: str,
+    filename: str | None = None,
+    disabled_rules: set[str] | None = None,
+    *,
+    source_path: str | None = None,
+    reference_root: str | None = None,
 ) -> tuple[list[dict[str, Any]], dict[str, int]]:
     budget_token = begin_traversal_budget()
     try:
-        spec = parse_spec(source, filename)
+        spec = parse_spec(
+            source, filename, source_path=source_path, reference_root=reference_root
+        )
         lines = source_line_map(source)
         raw_findings = [finding.to_dict() for finding in run_rules(spec, disabled_rules)]
         findings = _one_finding_per_location(_apply_suppressions(raw_findings, spec))

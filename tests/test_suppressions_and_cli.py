@@ -11,14 +11,19 @@ def test_operation_and_property_suppressions():
         "paths": {
             "/hooks": {
                 "post": {
-                    "x-security-ignore": ["AUTH-001"],
+                    "x-security-ignore": [{"rule_id": "AUTH-001", "reason": "Reviewed by the API owner."}],
                     "requestBody": {
                         "content": {
                             "application/json": {
                                 "schema": {
                                     "type": "object",
                                     "properties": {
-                                        "callback_url": {"type": "string", "x-security-ignore": ["SSRF-001"]},
+                                        "callback_url": {
+                                            "type": "string",
+                                            "x-security-ignore": [
+                                                {"rule_id": "SSRF-001", "reason": "Validated by the gateway."}
+                                            ],
+                                        },
                                     },
                                 }
                             }
@@ -47,7 +52,12 @@ def test_property_suppression_removes_only_the_matching_location():
                                 "schema": {
                                     "type": "object",
                                     "properties": {
-                                        "callback_url": {"type": "string", "x-security-ignore": ["SSRF-001"]},
+                                        "callback_url": {
+                                            "type": "string",
+                                            "x-security-ignore": [
+                                                {"rule_id": "SSRF-001", "reason": "Validated by the gateway."}
+                                            ],
+                                        },
                                         "webhook_url": {"type": "string"},
                                     },
                                 }

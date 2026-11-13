@@ -7,6 +7,7 @@ import re
 import time
 from collections.abc import Iterator
 from dataclasses import dataclass
+from datetime import UTC, date, datetime
 from typing import Any
 
 from api_checker.scanner.references import (
@@ -398,6 +399,24 @@ def location(operation: str, pointer: str) -> dict[str, Any]:
     return {"operation": operation, "pointer": fragment}
 
 
+def _active_suppression_records(value: Any) -> list[dict[str, str]]:
+    if not isinstance(value, list):
+        return []
+    today = datetime.now(UTC).date()
+    active: list[dict[str, str]] = []
+    for record in value:
+        if not isinstance(record, dict):
+            continue
+        rule_id, reason, expires = record.get("rule_id"), record.get("reason"), record.get("expires")
+        if not isinstance(rule_id, str) or not isinstance(reason, str):
+            continue
+        expiry_date = date.fromisoformat(expires) if isinstance(expires, str) else expires
+        if isinstance(expiry_date, date) and expiry_date < today:
+            continue
+        active.append(record)
+    return active
+
+
 def collect_suppressions(spec: dict[str, Any]) -> list[dict[str, Any]]:
     """Collect operation-level and schema-property x-security-ignore entries."""
     pending: list[Any] = [spec]
@@ -426,44 +445,41 @@ def collect_suppressions(spec: dict[str, Any]) -> list[dict[str, Any]]:
     suppressions: list[dict[str, Any]] = []
     for method, path, path_item, operation, operation_pointer in _operation_entries_with_pointers(spec):
         ignored = operation.get("x-security-ignore")
-        if isinstance(ignored, list):
-            ids = sorted({item for item in ignored if isinstance(item, str)})
-            if ids:
-                suppressions.append(
-                    {
-                        "operation": _operation_name(method, path),
-                        "pointer": pointer_fragment(operation_pointer),
-                        "scope": "operation",
-                        "rule_ids": ids,
-                    }
-                )
+        records = _active_suppression_records(ignored)
+        if records:
+            suppressions.append(
+                {
+                    "operation": _operation_name(method, path),
+                    "pointer": pointer_fragment(operation_pointer),
+                    "scope": "operation",
+                    "rule_ids": sorted({record["rule_id"] for record in records}),
+                }
+            )
         op_name = _operation_name(method, path)
         for schema, schema_pointer in iter_request_schemas(spec, operation, operation_pointer, path_item):
             for _, pointer, node in _walk_schema_locations(spec, schema, schema_pointer):
                 ignored = node.get("x-security-ignore")
-                if "/properties/" in pointer and isinstance(ignored, list):
-                    ids = sorted({item for item in ignored if isinstance(item, str)})
-                    if ids:
-                        suppressions.append(
-                            {
-                                "operation": op_name,
-                                "pointer": pointer_fragment(pointer),
-                                "scope": "property",
-                                "rule_ids": ids,
-                            }
-                        )
+                records = _active_suppression_records(ignored)
+                if "/properties/" in pointer and records:
+                    suppressions.append(
+                        {
+                            "operation": op_name,
+                            "pointer": pointer_fragment(pointer),
+                            "scope": "property",
+                            "rule_ids": sorted({record["rule_id"] for record in records}),
+                        }
+                    )
         for _, _, schema, schema_pointer in iter_response_schemas(spec, operation, operation_pointer):
             for _, pointer, node in _walk_schema_locations(spec, schema, schema_pointer):
                 ignored = node.get("x-security-ignore")
-                if "/properties/" in pointer and isinstance(ignored, list):
-                    ids = sorted({item for item in ignored if isinstance(item, str)})
-                    if ids:
-                        suppressions.append(
-                            {
-                                "operation": op_name,
-                                "pointer": pointer_fragment(pointer),
-                                "scope": "property",
-                                "rule_ids": ids,
-                            }
-                        )
+                records = _active_suppression_records(ignored)
+                if "/properties/" in pointer and records:
+                    suppressions.append(
+                        {
+                            "operation": op_name,
+                            "pointer": pointer_fragment(pointer),
+                            "scope": "property",
+                            "rule_ids": sorted({record["rule_id"] for record in records}),
+                        }
+                    )
     return suppressions

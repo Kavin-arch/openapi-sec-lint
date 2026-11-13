@@ -11,10 +11,16 @@ import sys
 import tomllib
 from collections.abc import Sequence
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from api_checker import __version__
-from api_checker.exporters import to_markdown, to_sarif
+from api_checker.exporters import (
+    to_attack_surface_markdown,
+    to_curl_test_plan,
+    to_markdown,
+    to_sarif,
+    to_security_diff_markdown,
+)
 from api_checker.scanner.parser import MAX_SPEC_BYTES
 
 SEVERITIES = ("critical", "high", "medium", "low", "info")
@@ -40,7 +46,7 @@ def _build_parser() -> argparse.ArgumentParser:
         choices=SEVERITIES,
         help="hide findings below this severity in reports (for example, medium)",
     )
-    scan.add_argument("--format", choices=("json", "sarif", "md"), help="report format")
+    scan.add_argument("--format", choices=("json", "sarif", "md", "curl"), help="report format")
     scan.add_argument("--output", type=Path, help="write the report to a file instead of stdout")
     scan.add_argument(
         "--disable", action="append", default=[], metavar="RULE-ID", help="disable a rule (repeatable)"
@@ -48,6 +54,16 @@ def _build_parser() -> argparse.ArgumentParser:
     scan.add_argument("--config", type=Path, help="read default options from a TOML or JSON file")
     scan.add_argument("--baseline", type=Path, help="show only findings absent from this baseline")
     scan.add_argument("--write-baseline", type=Path, help="write current finding fingerprints to a baseline")
+    surface = subparsers.add_parser("surface", help="summarize the API's static attack surface")
+    surface.add_argument("spec", help="JSON or YAML specification file")
+    surface.add_argument("--format", choices=("json", "md"), default="json")
+    surface.add_argument("--output", type=Path)
+    diff = subparsers.add_parser("diff", help="compare security posture between two specifications")
+    diff.add_argument("old_spec", help="older JSON or YAML specification")
+    diff.add_argument("new_spec", help="newer JSON or YAML specification")
+    diff.add_argument("--format", choices=("json", "md"), default="json")
+    diff.add_argument("--output", type=Path)
+    diff.add_argument("--disable", action="append", default=[], metavar="RULE-ID")
     return parser
 
 
@@ -121,6 +137,8 @@ def _scan_one(
     value: str,
     disabled: set[str],
 ) -> dict[str, Any]:
+    source_path: str | None = None
+    reference_root: str | None = None
     if value == "-":
         source = sys.stdin.read()
         filename = "stdin.yaml"
@@ -128,6 +146,8 @@ def _scan_one(
         name = "stdin"
     else:
         path = Path(value)
+        source_path = str(path.resolve())
+        reference_root = str(path.resolve().parent)
         source = path.read_text(encoding="utf-8-sig")
         if len(source.encode("utf-8")) > MAX_SPEC_BYTES:
             raise ValueError("Specifications are limited to 16 MB.")
@@ -138,7 +158,13 @@ def _scan_one(
         except ValueError:
             uri = path.resolve().as_posix()
     request = json.dumps(
-        {"source": source, "filename": filename, "disabled_rules": sorted(disabled)}
+        {
+            "source": source,
+            "filename": filename,
+            "disabled_rules": sorted(disabled),
+            "source_path": source_path,
+            "reference_root": reference_root,
+        }
     )
     try:
         # The specification is supplied over stdin and is never part of the command.
@@ -171,7 +197,69 @@ def _scan_one(
     }
 
 
+def _file_request(value: str) -> dict[str, Any]:
+    path = Path(value).resolve()
+    source = path.read_text(encoding="utf-8-sig")
+    if len(source.encode("utf-8")) > MAX_SPEC_BYTES:
+        raise ValueError("Specifications are limited to 16 MB.")
+    return {
+        "source": source,
+        "filename": path.name,
+        "source_path": str(path),
+        "reference_root": str(path.parent),
+    }
+
+
+def _run_action(request: dict[str, Any]) -> dict[str, Any]:
+    try:
+        completed = subprocess.run(  # nosec B603
+            [sys.executable, "-m", "api_checker.scan_process"],
+            input=json.dumps(request),
+            text=True,
+            encoding="utf-8",
+            capture_output=True,
+            timeout=SCAN_TIMEOUT_SECONDS,
+            check=False,
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise ValueError(f"Scan exceeded the {SCAN_TIMEOUT_SECONDS}-second time limit.") from exc
+    if completed.returncode != 0:
+        raise ValueError(f"Analysis process exited unexpectedly ({completed.returncode}).")
+    result = json.loads(completed.stdout)
+    if result.get("error"):
+        raise ValueError(result["error"])
+    return cast(dict[str, Any], result)
+
+
+def _run_surface(path: str, output_format: str) -> str:
+    request = _file_request(path)
+    result = _run_action({**request, "action": "surface"})
+    return (
+        json.dumps(result["surface"], indent=2, ensure_ascii=False)
+        if output_format == "json"
+        else to_attack_surface_markdown(result["surface"])
+    )
+
+
+def _run_diff(old_path: str, new_path: str, output_format: str, disabled: set[str]) -> str:
+    result = _run_action(
+        {
+            "action": "diff",
+            "disabled_rules": sorted(disabled),
+            "old": _file_request(old_path),
+            "new": _file_request(new_path),
+        }
+    )
+    return (
+        json.dumps(result["diff"], indent=2, ensure_ascii=False)
+        if output_format == "json"
+        else to_security_diff_markdown(result["diff"])
+    )
+
+
 def _serialize(scans: list[dict[str, Any]], output_format: str) -> str:
+    if output_format == "curl":
+        return "\n".join(to_curl_test_plan(scan) for scan in scans)
     if output_format == "sarif":
         report = to_sarif(scans[0])
         for scan in scans[1:]:
@@ -186,6 +274,21 @@ def _serialize(scans: list[dict[str, Any]], output_format: str) -> str:
 def main(argv: Sequence[str] | None = None) -> int:
     args = _build_parser().parse_args(argv)
     try:
+        if args.command == "surface":
+            rendered = _run_surface(args.spec, args.format)
+            if args.output:
+                args.output.write_text(rendered + "\n", encoding="utf-8")
+            else:
+                sys.stdout.write(rendered + "\n")
+            return 0
+        if args.command == "diff":
+            disabled = {rule.strip() for value in args.disable for rule in value.split(",") if rule.strip()}
+            rendered = _run_diff(args.old_spec, args.new_spec, args.format, disabled)
+            if args.output:
+                args.output.write_text(rendered + "\n", encoding="utf-8")
+            else:
+                sys.stdout.write(rendered + "\n")
+            return 0
         config = _config_options(args.config)
         config_disabled = config.get("disable", config.get("disabled_rules", []))
         if not isinstance(config_disabled, list) or not all(isinstance(item, str) for item in config_disabled):
@@ -193,8 +296,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         disabled = set(config_disabled)
         disabled.update(rule.strip() for value in args.disable for rule in value.split(",") if rule.strip())
         output_format = args.format or config.get("format", "json")
-        if output_format not in {"json", "sarif", "md"}:
-            raise ValueError("Config format must be json, sarif, or md.")
+        if output_format not in {"json", "sarif", "md", "curl"}:
+            raise ValueError("Config format must be json, sarif, md, or curl.")
         fail_on = args.fail_on or config.get("fail_on")
         if fail_on is not None and fail_on not in SEVERITIES:
             raise ValueError("Config fail_on must be a supported severity.")
