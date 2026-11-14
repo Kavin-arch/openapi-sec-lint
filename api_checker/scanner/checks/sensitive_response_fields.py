@@ -44,6 +44,7 @@ SENSITIVE_NAMES = {
     "credential",
     "credentials",
 }
+_PAGINATION_NAMES = {"cursor", "page_token", "next_page_token", "next_cursor", "continuation_token", "pagination_token", "next_token"}
 
 _SensitiveMatch = tuple[str, str]
 _CachedSchemaMatches = tuple[dict[str, Any], str, str, tuple[_SensitiveMatch, ...]]
@@ -122,7 +123,9 @@ def _sensitive_fields(
     visit_schema_node()
     active.add(identity)
     matches: list[_SensitiveMatch] = []
-    if trail and _is_sensitive_name(trail.rsplit(".", 1)[-1]) and resolved.get("writeOnly") is not True:
+    field_name = trail.rsplit(".", 1)[-1].replace("-", "_").lower() if trail else ""
+    pagination_token = "token" in field_name and any(part in field_name for part in ("page", "cursor", "continuation", "next"))
+    if trail and field_name not in _PAGINATION_NAMES and not pagination_token and _is_sensitive_name(trail.rsplit(".", 1)[-1]) and resolved.get("writeOnly") is not True:
         matches.append((trail, resolved_pointer))
 
     def child_base(keyword: str, child_key: object | None = None) -> str:

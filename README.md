@@ -12,6 +12,8 @@ signals, not confirmation of runtime vulnerabilities.
 | `AUTH-001` | Operations without an effective documented security requirement | Medium |
 | `AUTH-002` | Undefined security scheme references or Basic authentication paired with HTTP | Medium |
 | `AUTH-003` | OAuth flows without documented scopes or operations selecting no scopes | Medium |
+| `AUTH-004` | Admin-looking operations without documented role-like scopes | Medium |
+| `AUTH-005` | Discouraged OAuth implicit or password flows | Medium |
 | `BOLA-001` | Integer or string object identifier parameters | Low |
 | `MASS-001` | Write schemas that permit undeclared fields or omit `readOnly` on likely server-managed fields | Low |
 | `TRANSPORT-001` | Declared plain HTTP servers | Medium |
@@ -20,11 +22,19 @@ signals, not confirmation of runtime vulnerabilities.
 | `RESOURCE-001` | Request arrays without `maxItems` | Medium |
 | `RESOURCE-002` | Request strings/maps without bounds or top-level GET arrays without pagination | Low |
 | `SSRF-001` | URL-like request fields without an enum or pattern constraint | Medium |
+| `FLOW-001` | Sensitive business-flow names that merit abuse-control review | Low |
+| `CONFIG-001` | Verbose 5xx schemas, wildcard request media types, or internal server URLs | Medium |
+| `INV-001` | Deprecated and prerelease routes that merit inventory review | Low |
+| `CONSUME-001` | Operations that appear to import or consume third-party data | Medium |
+| `CONTRACT-001` | Credential-like URL parameters, missing error responses, unbounded strings, and multipart uploads | Low |
 
 Read the [rule reference](docs/rules/README.md) for limitations and OWASP API
 Top 10/CWE mappings. `MASS-001` and `RESOURCE-002` are low severity because
 these contract signals are especially noisy. Use `--disable RULE-ID` to turn
 off checks that do not fit your API.
+All checks are static contract heuristics. `AUTH-004`, `FLOW-001`, `INV-001`,
+and `CONSUME-001` use names and descriptions as review prompts; none confirms a
+runtime authorization, abuse, lifecycle, or data-consumption defect.
 
 Local JSON Pointer `$ref` references are followed. The CLI also resolves
 relative file references under the directory containing the root spec; URL
@@ -171,6 +181,9 @@ publish.
 
 See [CONTRIBUTING.md](CONTRIBUTING.md), [SECURITY.md](SECURITY.md), and
 [CHANGELOG.md](CHANGELOG.md).
+
+See the [evaluation notes](docs/evaluation/README.md) for the precision-label
+workflow, current regression coverage, and benchmark limitations.
 
 ## Boundaries
 

@@ -4,6 +4,15 @@ from collections.abc import Callable
 from typing import Any
 
 from api_checker.scanner.checks.authentication import check_authentication
+from api_checker.scanner.checks.coverage_gaps import (
+    check_configuration_exposure,
+    check_function_authorization,
+    check_inventory_lifecycle,
+    check_oauth_unsafe_flows,
+    check_operation_contract_gaps,
+    check_sensitive_business_flows,
+    check_unsafe_consumption,
+)
 from api_checker.scanner.checks.dangling_security_schemes import check_dangling_security_schemes
 from api_checker.scanner.checks.oauth_scopes import check_oauth_scopes
 from api_checker.scanner.checks.object_id_parameters import check_object_id_parameters
@@ -29,6 +38,13 @@ RULE_IDS = (
     "RESOURCE-001",
     "RESOURCE-002",
     "SSRF-001",
+    "AUTH-004",
+    "AUTH-005",
+    "FLOW-001",
+    "CONFIG-001",
+    "INV-001",
+    "CONSUME-001",
+    "CONTRACT-001",
 )
 
 # Keep ordering stable so reports and the UI remain predictable as checks grow.
@@ -44,6 +60,13 @@ RULES: tuple[RuleCheck, ...] = (
     check_unbounded_request_arrays,
     check_unbounded_strings_and_pagination,
     check_url_input_fields,
+    check_function_authorization,
+    check_oauth_unsafe_flows,
+    check_sensitive_business_flows,
+    check_configuration_exposure,
+    check_inventory_lifecycle,
+    check_unsafe_consumption,
+    check_operation_contract_gaps,
 )
 RULE_COUNT = len(RULES)
 

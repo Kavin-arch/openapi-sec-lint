@@ -5,6 +5,7 @@ import json
 import pytest
 
 from api_checker.cli import main
+from api_checker.scanner.attack_surface import build_attack_surface
 from api_checker.scanner.engine import analyze
 from api_checker.scanner.parser import SpecError, parse_spec
 from api_checker.scanner.security_diff import build_security_diff
@@ -143,3 +144,34 @@ def test_test_plan_export_is_shell_text_and_covers_finding_operations(tmp_path, 
     assert "curl --silent" in output
     assert "--globoff" in output
     assert "Exporting this file sends no requests" in output
+
+
+def test_attack_surface_handles_secured_operations_binary_and_parameter_content():
+    spec = {
+        "openapi": "3.0.3", "info": {"title": "Surface", "version": "1"},
+        "security": [{"oauth": ["read"]}],
+        "paths": {
+            "/admin/upload": {"post": {
+                "operationId": "adminUpload", "parameters": [{"name": "callback", "in": "query", "content": {
+                    "text/plain": {"schema": {"type": "string", "format": "uri"}}
+                }}],
+                "requestBody": {"content": {"application/octet-stream": {"schema": {"type": "string", "format": "binary"}}}},
+            }},
+            "/optional": {"get": {"security": [{}]}},
+        },
+    }
+    surface = build_attack_surface(spec)
+    assert surface["write_operations"]
+    assert surface["file_upload_endpoints"]
+    assert surface["url_accepting_endpoints"]
+    assert surface["admin_looking_endpoints"]
+    assert len(surface["unauthenticated_endpoints"]) == 1
+
+
+def test_attack_surface_supports_swagger_form_uploads():
+    spec = {
+        "swagger": "2.0", "info": {"title": "Legacy", "version": "1"},
+        "paths": {"/upload": {"post": {"parameters": [{"name": "file", "in": "formData", "type": "file"}]}}},
+    }
+    surface = build_attack_surface(spec)
+    assert surface["file_upload_endpoints"][0]["operation"] == "POST /upload"

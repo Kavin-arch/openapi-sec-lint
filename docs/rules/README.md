@@ -10,3 +10,4 @@ was confirmed.
 - [DATA-001](DATA-001.md)
 - [RESOURCE-001](RESOURCE-001.md) · [RESOURCE-002](RESOURCE-002.md)
 - [SSRF-001](SSRF-001.md)
+- [Extended coverage checks](EXTENDED-COVERAGE.md) · `AUTH-004` · `AUTH-005` · `FLOW-001` · `CONFIG-001` · `INV-001` · `CONSUME-001` · `CONTRACT-001`

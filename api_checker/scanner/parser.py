@@ -14,6 +14,8 @@ from api_checker.scanner.references import pointer_fragment, pointer_join, resol
 MAX_SPEC_BYTES = 16 * 1024 * 1024
 MAX_REFERENCE_FILES = 100
 MAX_REFERENCE_BYTES = 64 * 1024 * 1024
+MAX_DOCUMENT_NODES = 250_000
+MAX_YAML_ALIASES = 10_000
 
 
 class SpecError(ValueError):
@@ -28,6 +30,17 @@ _SafeLoaderBase = getattr(yaml, "CSafeLoader", yaml.SafeLoader)
 
 
 class _UniqueKeySafeLoader(_SafeLoaderBase):  # type: ignore[valid-type, misc]
+    def __init__(self, stream: Any) -> None:
+        super().__init__(stream)
+        self._alias_count = 0
+
+    def compose_node(self, parent: Any, index: Any) -> Any:
+        if self.check_event(yaml.AliasEvent):
+            self._alias_count += 1
+            if self._alias_count > MAX_YAML_ALIASES:
+                raise SpecError(f"YAML contains more than {MAX_YAML_ALIASES:,} aliases.")
+        return super().compose_node(parent, index)
+
     def construct_mapping(self, node: yaml.MappingNode, deep: bool = False) -> dict[Any, Any]:
         if not isinstance(node, yaml.MappingNode):
             return cast(dict[Any, Any], super().construct_mapping(node, deep=deep))
@@ -78,6 +91,14 @@ def _parse_document(source: str, filename: str | None = None) -> Any:
             # documents that begin with a brace but are not strict JSON. Large
             # files without a YAML extension avoid a potentially slow fallback.
             pass
+    # Pre-scan aliases because the C loader bypasses Python's compose_node override.
+    # The C scanner keeps this pass inexpensive while preventing alias-heavy construction.
+    alias_count = 0
+    for token in yaml.scan(source, Loader=_SafeLoaderBase):
+        if isinstance(token, yaml.tokens.AliasToken):
+            alias_count += 1
+            if alias_count > MAX_YAML_ALIASES:
+                raise SpecError(f"YAML contains more than {MAX_YAML_ALIASES:,} aliases.")
     # This custom loader is based on SafeLoader and rejects Python object tags.
     return yaml.load(source, Loader=_UniqueKeySafeLoader)  # nosec B506
 
@@ -290,6 +311,21 @@ def _validate_suppression_records(document: dict[str, Any]) -> None:
             pending.extend(value)
 
 
+def _validate_document_complexity(document: dict[str, Any]) -> None:
+    pending: list[Any] = [document]
+    seen: set[int] = set()
+    while pending:
+        value = pending.pop()
+        if isinstance(value, (dict, list)):
+            identity = id(value)
+            if identity in seen:
+                continue
+            seen.add(identity)
+            if len(seen) > MAX_DOCUMENT_NODES:
+                raise SpecError(f"Specification exceeds the {MAX_DOCUMENT_NODES:,}-node complexity limit.")
+            pending.extend(value.values() if isinstance(value, dict) else value)
+
+
 def parse_spec(
     source: str,
     filename: str | None = None,
@@ -312,6 +348,8 @@ def parse_spec(
 
     if not isinstance(document, dict):
         raise SpecError("The API definition must be a JSON or YAML object.")
+
+    _validate_document_complexity(document)
 
     document = _bundle_file_references(
         document,

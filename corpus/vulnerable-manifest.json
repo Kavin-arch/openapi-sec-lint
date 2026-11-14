@@ -1,0 +1,37 @@
+{
+  "retrieved_at": "2026-11-14",
+  "scope": "Static specification signals only; not a confirmation that each runtime vulnerability is exploitable.",
+  "specs": [
+    {
+      "file": "crapi-openapi-spec.json",
+      "source": "https://raw.githubusercontent.com/OWASP/crAPI/develop/openapi-spec/crapi-openapi-spec.json",
+      "upstream_license": "Apache-2.0",
+      "sha256": "9d57e0e76348a9a6bdff2c841ce791bb9de604a316b724074a998e3c484a4ace",
+      "expected_rules": ["AUTH-001", "AUTH-004", "BOLA-001", "CONFIG-001", "CONSUME-001", "CONTRACT-001", "DATA-001", "FLOW-001", "MASS-001", "RESOURCE-002", "SSRF-001", "TRANSPORT-001"],
+      "mapped_challenges": [
+        {"name": "BOLA", "rule": "BOLA-001"},
+        {"name": "Broken authentication", "rule": "AUTH-001"},
+        {"name": "Excessive data exposure", "rule": "DATA-001"},
+        {"name": "Rate limiting", "rule": "CONTRACT-001"},
+        {"name": "Broken function-level authorization", "rule": "AUTH-004"},
+        {"name": "Mass assignment", "rule": "MASS-001"},
+        {"name": "SSRF", "rule": "SSRF-001"},
+        {"name": "Unauthenticated access", "rule": "AUTH-001"}
+      ]
+    },
+    {
+      "file": "vampi-openapi3.yml",
+      "source": "https://raw.githubusercontent.com/erev0s/VAmPI/master/openapi_specs/openapi3.yml",
+      "upstream_license": "MIT",
+      "sha256": "35200f354f9c9968182fc19458295ed45bb4c368150348c46d5146a7e40a61c9",
+      "expected_rules": ["AUTH-001", "CONFIG-001", "CONSUME-001", "CONTRACT-001", "DATA-001", "INV-001", "MASS-001", "RESOURCE-002", "TRANSPORT-001"],
+      "mapped_challenges": [
+        {"name": "Unauthorized password change", "rule": "AUTH-001"},
+        {"name": "Broken object-level authorization", "rule": "BOLA-001"},
+        {"name": "Mass assignment", "rule": "MASS-001"},
+        {"name": "Excessive data exposure", "rule": "DATA-001"},
+        {"name": "Lack of resources and rate limiting", "rule": "RESOURCE-002"}
+      ]
+    }
+  ]
+}

@@ -5,6 +5,8 @@ from api_checker.scanner.common import begin_traversal_budget, collect_suppressi
 from api_checker.scanner.parser import parse_spec, source_line_map
 from api_checker.scanner.rules import RULE_COUNT, RULE_IDS, operations, run_rules
 
+MAX_FINDINGS = 10_000
+
 
 def _apply_suppressions(findings: list[dict[str, Any]], spec: dict[str, Any]) -> list[dict[str, Any]]:
     suppressions = collect_suppressions(spec)
@@ -130,6 +132,8 @@ def _one_finding_per_location(findings: list[dict[str, Any]]) -> list[dict[str, 
             current["fingerprint"] = fingerprint
             by_fingerprint[fingerprint] = current
             expanded.append(current)
+            if len(expanded) > MAX_FINDINGS:
+                return expanded
     return expanded
 
 
@@ -148,7 +152,8 @@ def analyze(
         )
         lines = source_line_map(source)
         raw_findings = [finding.to_dict() for finding in run_rules(spec, disabled_rules)]
-        findings = _one_finding_per_location(_apply_suppressions(raw_findings, spec))
+        expanded_findings = _one_finding_per_location(_apply_suppressions(raw_findings, spec))
+        findings = expanded_findings[:MAX_FINDINGS]
         for finding in findings:
             locations = finding.get("evidence", {}).get("locations", [])
             for item in locations:
@@ -163,5 +168,6 @@ def analyze(
         counts[finding["severity"]] += 1
     counts["operations"] = sum(1 for _ in operations(spec))
     counts["findings"] = len(findings)
+    counts["truncated_findings"] = int(len(expanded_findings) > MAX_FINDINGS)
     counts["checks"] = RULE_COUNT - len(set(RULE_IDS) & (disabled_rules or set()))
     return findings, counts
