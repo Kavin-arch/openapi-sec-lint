@@ -1,0 +1,26 @@
+name: Code scanning demo
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  security-events: write
+
+jobs:
+  sample-sarif:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: python -m pip install .
+      - name: Scan the bundled sample spec
+        run: openapi-sec-lint scan api_checker/examples/sample-openapi.yaml --format sarif --output openapi-sec-lint.sarif
+      - uses: github/codeql-action/upload-sarif@v4
+        with:
+          sarif_file: openapi-sec-lint.sarif
+          category: openapi-sec-lint-demo

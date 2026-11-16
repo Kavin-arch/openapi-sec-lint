@@ -1,0 +1,41 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/Kavin-arch/openapi-sec-lint/blob/main/docs/report.schema.json",
+  "title": "OpenAPI Security Lint JSON report",
+  "description": "A scan report or array of reports emitted by the CLI or web API.",
+  "oneOf": [
+    {"$ref": "#/$defs/scan"},
+    {"type": "array", "items": {"$ref": "#/$defs/scan"}}
+  ],
+  "$defs": {
+    "scan": {
+      "type": "object",
+      "required": ["name", "spec_filename", "status", "summary", "findings"],
+      "properties": {
+        "id": {"type": ["string", "null"]},
+        "name": {"type": "string"},
+        "target_url": {"type": "string"},
+        "spec_filename": {"type": "string"},
+        "spec_sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+        "status": {"type": "string", "enum": ["completed", "failed", "queued", "running"]},
+        "summary": {"type": "object", "additionalProperties": {"type": "integer", "minimum": 0}},
+        "findings": {"type": "array", "items": {"$ref": "#/$defs/finding"}}
+      }
+    },
+    "finding": {
+      "type": "object",
+      "required": ["rule_id", "title", "severity", "confidence", "summary", "impact", "remediation", "evidence", "fingerprint"],
+      "properties": {
+        "rule_id": {"type": "string"},
+        "title": {"type": "string"},
+        "severity": {"type": "string", "enum": ["critical", "high", "medium", "low", "info"]},
+        "confidence": {"type": "string", "enum": ["high", "medium", "low"]},
+        "summary": {"type": "string"},
+        "impact": {"type": "string"},
+        "remediation": {"type": "string"},
+        "fingerprint": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+        "evidence": {"type": "object"}
+      }
+    }
+  }
+}

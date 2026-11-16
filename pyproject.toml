@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "openapi-sec-lint"
 version = "0.3.0"
-description = "Local security linting for OpenAPI and Swagger specifications"
+description = "Security checks for OpenAPI contracts from your terminal or CI, without probing live APIs"
 readme = "README.md"
 license = "MIT"
 license-files = ["LICENSE"]
@@ -21,19 +21,21 @@ classifiers = [
 ]
 requires-python = ">=3.11,<3.14"
 dependencies = [
-  "fastapi>=0.115,<1.0",
-  "pydantic>=2.7,<3.0",
-  "uvicorn>=0.30,<1.0",
   "PyYAML>=6.0,<7.0",
   "psutil>=5.9,<8.0",
 ]
 
 [project.urls]
-Repository = "https://github.com/Kavin-arch/api-vulnerability-checker"
-Documentation = "https://github.com/Kavin-arch/api-vulnerability-checker/tree/main/docs"
-Issues = "https://github.com/Kavin-arch/api-vulnerability-checker/issues"
+Repository = "https://github.com/Kavin-arch/openapi-sec-lint"
+Documentation = "https://github.com/Kavin-arch/openapi-sec-lint/tree/main/docs"
+Issues = "https://github.com/Kavin-arch/openapi-sec-lint/issues"
 
 [project.optional-dependencies]
+web = [
+  "fastapi>=0.115,<1.0",
+  "pydantic>=2.7,<3.0",
+  "uvicorn>=0.30,<1.0",
+]
 dev = [
   "httpx>=0.27,<1.0",
   "hypothesis>=6.100,<7.0",
@@ -44,6 +46,9 @@ dev = [
   "types-PyYAML>=6.0,<7.0",
   "bandit>=1.7,<2.0",
   "pip-audit>=2.7,<3.0",
+  "fastapi>=0.115,<1.0",
+  "pydantic>=2.7,<3.0",
+  "uvicorn>=0.30,<1.0",
 ]
 
 [project.scripts]

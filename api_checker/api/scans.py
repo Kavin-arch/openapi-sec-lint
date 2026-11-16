@@ -8,7 +8,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_valida
 from starlette.responses import JSONResponse
 
 from api_checker.database import Database, QueueFullError, ScanInProgressError
-from api_checker.exporters import to_markdown, to_sarif
+from api_checker.exporters import to_github_annotations, to_html, to_junit, to_markdown, to_sarif
 from api_checker.scanner.parser import MAX_SPEC_BYTES
 from api_checker.worker import ScanWorker
 
@@ -121,6 +121,32 @@ async def list_scans(request: Request, limit: int = 50) -> dict[str, Any]:
     return {"items": scans}
 
 
+@router.get("/scans/diff")
+async def diff_scans(request: Request, old_id: str, new_id: str) -> dict[str, Any]:
+    if old_id == new_id:
+        raise HTTPException(status_code=422, detail="Choose two different scans.")
+    database: Database = request.app.state.database
+    old_scan, new_scan = await asyncio.gather(
+        asyncio.to_thread(database.get_scan, old_id),
+        asyncio.to_thread(database.get_scan, new_id),
+    )
+    if old_scan is None or new_scan is None:
+        raise HTTPException(status_code=404, detail="One or both scans were not found.")
+    if old_scan.get("status") != "completed" or new_scan.get("status") != "completed":
+        raise HTTPException(status_code=409, detail="Both scans must be completed.")
+    old_findings = {item["fingerprint"]: item for item in old_scan.get("findings", [])}
+    new_findings = {item["fingerprint"]: item for item in new_scan.get("findings", [])}
+    added = [item for key, item in new_findings.items() if key not in old_findings]
+    removed = [item for key, item in old_findings.items() if key not in new_findings]
+    return {
+        "old_scan": {"id": old_id, "name": old_scan.get("name")},
+        "new_scan": {"id": new_id, "name": new_scan.get("name")},
+        "added_findings": sorted(added, key=lambda item: (item.get("rule_id", ""), item.get("title", ""))),
+        "removed_findings": sorted(removed, key=lambda item: (item.get("rule_id", ""), item.get("title", ""))),
+        "summary": {"added": len(added), "removed": len(removed)},
+    }
+
+
 @router.get("/scans/{scan_id}")
 async def get_scan(scan_id: str, request: Request) -> dict[str, Any]:
     scan = await asyncio.to_thread(request.app.state.database.get_scan, scan_id)
@@ -132,8 +158,8 @@ async def get_scan(scan_id: str, request: Request) -> dict[str, Any]:
 @router.get("/scans/{scan_id}/export")
 async def export_scan(scan_id: str, request: Request, format: str = "json") -> Response:
     normalized = format.lower()
-    if normalized not in {"json", "sarif", "md"}:
-        raise HTTPException(status_code=422, detail="format must be sarif, json, or md.")
+    if normalized not in {"json", "sarif", "md", "html", "junit", "github"}:
+        raise HTTPException(status_code=422, detail="format must be json, sarif, md, html, junit, or github.")
     scan = await asyncio.to_thread(request.app.state.database.get_scan, scan_id)
     if scan is None:
         raise HTTPException(status_code=404, detail="Scan not found.")
@@ -147,6 +173,24 @@ async def export_scan(scan_id: str, request: Request, format: str = "json") -> R
             content=to_sarif(scan),
             media_type="application/sarif+json",
             headers={"Content-Disposition": f'attachment; filename="scan-{scan_id}.sarif"'},
+        )
+    if normalized == "html":
+        return Response(
+            content=to_html(scan),
+            media_type="text/html; charset=utf-8",
+            headers={"Content-Disposition": f'attachment; filename="scan-{scan_id}.html"'},
+        )
+    if normalized == "junit":
+        return Response(
+            content=to_junit([scan]),
+            media_type="application/xml; charset=utf-8",
+            headers={"Content-Disposition": f'attachment; filename="scan-{scan_id}.xml"'},
+        )
+    if normalized == "github":
+        return Response(
+            content=to_github_annotations([scan]),
+            media_type="text/plain; charset=utf-8",
+            headers={"Content-Disposition": f'attachment; filename="scan-{scan_id}-annotations.txt"'},
         )
     return Response(
         content=to_markdown(scan),

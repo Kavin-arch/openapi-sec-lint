@@ -8,7 +8,7 @@ WORKDIR /app
 RUN groupadd --system app && useradd --system --gid app --home-dir /app app
 COPY pyproject.toml README.md LICENSE ./
 COPY api_checker ./api_checker
-RUN python -m pip install --no-cache-dir . \
+RUN python -m pip install --no-cache-dir ".[web]" \
     && mkdir -p /app/data \
     && chown -R app:app /app
 

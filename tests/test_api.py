@@ -71,6 +71,14 @@ def test_api_scan_exports_and_delete(monkeypatch, tmp_path):
                 assert sarif.json()["version"] == "2.1.0"
                 markdown = await client.get(f"/api/v1/scans/{scan['id']}/export?format=md")
                 assert "API security review" in markdown.text
+                html = await client.get(f"/api/v1/scans/{scan['id']}/export?format=html")
+                assert html.status_code == 200
+                assert html.headers["content-type"].startswith("text/html")
+                junit = await client.get(f"/api/v1/scans/{scan['id']}/export?format=junit")
+                assert junit.status_code == 200
+                assert "<testsuites" in junit.text
+                annotations = await client.get(f"/api/v1/scans/{scan['id']}/export?format=github")
+                assert annotations.status_code == 200
 
                 assert (await client.get(f"/api/v1/scans/{scan['id']}/export?format=xml")).status_code == 422
                 assert (await client.delete(f"/api/v1/scans/{scan['id']}")).status_code == 204
@@ -89,6 +97,19 @@ def test_api_delete_all_scans(monkeypatch, tmp_path):
                 second = (await client.post("/api/v1/scans", json=_scan_payload("two"))).json()
                 await _wait_for_completion(client, first["id"])
                 await _wait_for_completion(client, second["id"])
+                same = await client.get(
+                    f"/api/v1/scans/diff?old_id={first['id']}&new_id={first['id']}"
+                )
+                assert same.status_code == 422
+                missing = await client.get(
+                    f"/api/v1/scans/diff?old_id=missing&new_id={second['id']}"
+                )
+                assert missing.status_code == 404
+                diff = await client.get(
+                    f"/api/v1/scans/diff?old_id={first['id']}&new_id={second['id']}"
+                )
+                assert diff.status_code == 200
+                assert diff.json()["summary"] == {"added": 0, "removed": 0}
                 assert (await client.delete("/api/v1/scans")).status_code == 204
                 assert (await client.get("/api/v1/scans")).json()["items"] == []
 

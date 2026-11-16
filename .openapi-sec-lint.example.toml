@@ -1,0 +1,8 @@
+format = "sarif"
+fail_on = "high"
+min_severity = "medium"
+disable = ["MASS-001"]
+path_ignores = ["vendor/**", "examples/generated-*.yaml"]
+
+[rule_severity]
+"BOLA-001" = "medium"

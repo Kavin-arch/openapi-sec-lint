@@ -1,9 +1,38 @@
-# OpenAPI Security Lint
+# openapi-sec-lint
 
-A local-first security linter for OpenAPI 3.x and Swagger 2.0 specifications.
-It analyzes the contract and stores web scan history in SQLite. **It does not
-send requests to the API described by a specification.** Findings are review
-signals, not confirmation of runtime vulnerabilities.
+**Catch security gaps in OpenAPI contracts from your terminal or CI, without probing live APIs.**
+
+[![CI](https://github.com/Kavin-arch/openapi-sec-lint/actions/workflows/ci.yml/badge.svg)](https://github.com/Kavin-arch/openapi-sec-lint/actions/workflows/ci.yml)
+[![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/Kavin-arch/openapi-sec-lint/badge)](https://scorecard.dev/viewer/?uri=github.com/Kavin-arch/openapi-sec-lint)
+
+![openapi-sec-lint terminal demo](docs/assets/terminal-demo.gif)
+
+## Quickstart
+
+```sh
+pip install openapi-sec-lint
+openapi-sec-lint scan openapi.yaml --format sarif --output openapi-sec-lint.sarif
+openapi-sec-lint scan openapi.yaml --fail-on high
+```
+
+## Choose the right linter
+
+| Tool | Focus | Use it when |
+|---|---|---|
+| **openapi-sec-lint** | Security-focused, static review signals for authentication, object access, sensitive fields, SSRF, and resource limits | You want security checks with a simple CLI and a SARIF-ready GitHub Action |
+| [Spectral](https://github.com/stoplightio/spectral) | Flexible rulesets for API style and description quality, with built-in OpenAPI, AsyncAPI, and Arazzo rules | You need organization-specific style guides or a general JSON/YAML ruleset engine |
+| [Vacuum](https://quobix.com/vacuum/) | OpenAPI and AsyncAPI linting with recommended/custom rulesets, report formats, and change detection | You want a broad API-description linter with configurable CI reporting |
+
+These tools cover overlapping but different needs. openapi-sec-lint findings are contract heuristics, not proof of runtime vulnerabilities; use general linting and runtime security testing where they fit.
+
+## GitHub Security tab
+
+The included SARIF workflow uploads a small sample report to code scanning on pushes to `main`. After its first successful run, the findings will appear in the repository's [Security tab](https://github.com/Kavin-arch/openapi-sec-lint/security/code-scanning).
+
+A local-first CLI and optional browser UI for static review of OpenAPI 3.x and
+Swagger 2.0. It never calls the described API; findings are review signals,
+not confirmation of runtime vulnerabilities. The prepared
+[social preview image](docs/assets/social-preview.png) is sized for GitHub.
 
 ## Checks
 
@@ -57,12 +86,20 @@ or on a schema property to suppress findings at that property and below it.
 
 ## Install and run
 
-Python 3.11 or 3.12 is supported. From the repository:
+Python 3.11, 3.12, and 3.13 are supported. The default install includes the
+CLI only:
 
 ```powershell
 py -3.11 -m venv .venv
 .\.venv\Scripts\Activate.ps1
-python -m pip install -e ".[dev]"
+python -m pip install openapi-sec-lint
+openapi-sec-lint --help
+```
+
+To run the optional local web interface from a source checkout:
+
+```powershell
+python -m pip install -e ".[web]"
 python -m uvicorn api_checker.main:app --reload
 ```
 
@@ -98,7 +135,10 @@ openapi-sec-lint scan api.yaml --format curl --output test-candidates.sh
 Get-Content .\api.yaml | openapi-sec-lint scan - --format md
 ```
 
-`scan` formats are `json`, `sarif`, `md`, and `curl`. Curl output is a manual
+`scan` formats are `json`, `sarif`, `md`, `curl`, `html`, `github`, and `junit`.
+The JSON report shape is in [report.schema.json](docs/report.schema.json).
+Exit codes are 0 for a successful scan, 1 when `--fail-on` is met, and 2 for
+invalid input/configuration or a scan error. Curl output is a manual
 test-plan script assembled from affected operations; generating it sends no
 requests. Review each case, replace path placeholders, and add test credentials
 locally before running it. `diff` compares findings and operation security
@@ -106,14 +146,20 @@ between two specs, including removed authentication, loosened OAuth scopes, and
 new unauthenticated endpoints. `surface` lists unauthenticated operations,
 writes, upload routes, URL-accepting routes, and admin-looking paths. These
 reports are static signals and may need review. `--output PATH` writes a report
-to a file. `--disable RULE-ID` may be repeated or accept comma-separated IDs. A TOML
-config can set scan defaults:
+to a file. `--disable RULE-ID` may be repeated or accept comma-separated IDs.
+A `.openapi-sec-lint.toml` is discovered from the current directory upward, or
+select a config with `--config PATH`. TOML or JSON config can set scan defaults
+and per-rule severity/path filters; see [.openapi-sec-lint.example.toml](.openapi-sec-lint.example.toml):
 
 ```toml
 format = "sarif"
 fail_on = "high"
 min_severity = "medium"
 disable = ["MASS-001", "RESOURCE-002"]
+path_ignores = ["vendor/**"]
+
+[rule_severity]
+"BOLA-001" = "medium"
 ```
 
 Use `--baseline baseline.json` to report only new findings and
@@ -130,16 +176,19 @@ web API limit.
   `target_url`, `filename`, and `spec_text`; `Content-Type: application/json`
   is required.
 - `GET /api/v1/scans?limit=50` — list recent scans.
+- `GET /api/v1/scans/diff?old_id=...&new_id=...` — compare two completed scans.
 - `GET /api/v1/scans/{id}` — read status, summary, findings, and source SHA-256.
-- `GET /api/v1/scans/{id}/export?format=sarif|json|md` — download a report.
+- `GET /api/v1/scans/{id}/export?format=json|sarif|md|html|junit|github` — download a report.
 - `DELETE /api/v1/scans/{id}` — delete a scan, cancelling it when queued/running.
 - `DELETE /api/v1/scans` — clear history when no scans are queued or running.
 - `GET /api/v1/sample-spec` — load the bundled sample for the UI.
 
 Uploads are limited to 16 MiB. Duplicate JSON/YAML object keys and missing
 required top-level metadata are rejected. Parsing is structural, not full
-OpenAPI validation. The source specification is removed from SQLite after
-analysis; its SHA-256, report, and metadata remain in `data/scanner.sqlite3`.
+OpenAPI validation. The full source specification is removed from SQLite after
+analysis. Each finding retains only the flagged source line (up to 500
+characters) for the UI viewer; SHA-256, report, excerpt, and metadata remain in
+`data/scanner.sqlite3` until scan history is deleted.
 
 Set `API_VULN_DB` to store SQLite elsewhere:
 
@@ -164,20 +213,59 @@ The image uses a pinned Python base image and includes a `/health` health check.
 Install development dependencies and run the same checks as CI:
 
 ```sh
-python -m pip install -e ".[dev]"
+python -m pip install -e ".[dev,web]"
 ruff check api_checker tests
 mypy api_checker
-pytest --cov=api_checker --cov-fail-under=60
+pytest --cov=api_checker --cov-fail-under=85
 pip-audit
 bandit -r api_checker
 ```
 
-GitHub Actions runs the quality checks on Python 3.11 and 3.12, dogfoods the
+GitHub Actions runs quality checks on Windows, macOS, and Linux with Python
+3.11–3.13, dogfoods the
 bundled sample and regression corpus, and builds the Docker image. See the
 [recorded corpus counts](docs/corpus-results.md). Dependabot checks Python and
 workflow dependencies weekly. Version tags trigger a PyPI trusted-publishing
-workflow; the package must be configured on PyPI before that workflow can
-publish.
+workflow after the package is configured for PyPI trusted publishing. It creates
+a GitHub release, signs distributions and an SPDX SBOM with Sigstore, and
+attaches the artifacts and bundles to the release. Tagged containers are
+published to GHCR. Before tagging a release, update the project version in
+`pyproject.toml` and record the release in `CHANGELOG.md`; the publish workflow
+checks that the tag and package versions match. See
+[ARCHITECTURE.md](ARCHITECTURE.md) and [THREAT_MODEL.md](THREAT_MODEL.md).
+Verify a wheel bundle with the identity and issuer recorded by the workflow:
+
+```sh
+sigstore verify identity --bundle openapi_sec_lint-X.Y.Z-py3-none-any.whl.sigstore.json \
+  --cert-identity "https://github.com/Kavin-arch/openapi-sec-lint/.github/workflows/publish.yml@refs/tags/vX.Y.Z" \
+  --cert-oidc-issuer https://token.actions.githubusercontent.com \
+  openapi_sec_lint-X.Y.Z-py3-none-any.whl
+```
+
+### GitHub Action
+
+```yaml
+permissions:
+  contents: read
+  security-events: write
+steps:
+  - uses: actions/checkout@v4
+  - uses: Kavin-arch/openapi-sec-lint/.github/actions/openapi-sec-lint@main
+    with:
+      spec: openapi.yaml
+```
+
+The composite action installs the checked out version, produces SARIF, and
+uploads it to code scanning. Set `upload-sarif: "false"` to skip the upload.
+The pre-commit hook is available as `openapi-sec-lint`:
+
+```yaml
+repos:
+  - repo: https://github.com/Kavin-arch/openapi-sec-lint
+    rev: main
+    hooks:
+      - id: openapi-sec-lint
+```
 
 See [CONTRIBUTING.md](CONTRIBUTING.md), [SECURITY.md](SECURITY.md), and
 [CHANGELOG.md](CHANGELOG.md).

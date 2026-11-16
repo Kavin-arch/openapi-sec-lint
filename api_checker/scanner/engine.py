@@ -154,6 +154,7 @@ def analyze(
         raw_findings = [finding.to_dict() for finding in run_rules(spec, disabled_rules)]
         expanded_findings = _one_finding_per_location(_apply_suppressions(raw_findings, spec))
         findings = expanded_findings[:MAX_FINDINGS]
+        source_lines = source.splitlines() if findings else []
         for finding in findings:
             locations = finding.get("evidence", {}).get("locations", [])
             for item in locations:
@@ -161,6 +162,11 @@ def analyze(
                     line = lines.get(item["pointer"])
                     if line is not None:
                         item["start_line"] = line
+                        if 1 <= line <= len(source_lines):
+                            item["source_excerpt"] = {
+                                "start_line": line,
+                                "lines": [{"number": line, "text": source_lines[line - 1][:500]}],
+                            }
     finally:
         end_traversal_budget(budget_token)
     counts = {level: 0 for level in ("critical", "high", "medium", "low", "info")}

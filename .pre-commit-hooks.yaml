@@ -1,0 +1,7 @@
+- id: openapi-sec-lint
+  name: OpenAPI security lint
+  entry: openapi-sec-lint scan
+  language: python
+  additional_dependencies: []
+  types_or: [json, yaml]
+  pass_filenames: true

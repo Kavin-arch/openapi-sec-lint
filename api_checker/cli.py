@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import fnmatch
 import hashlib
 import json
 import os
@@ -17,11 +18,15 @@ from api_checker import __version__
 from api_checker.exporters import (
     to_attack_surface_markdown,
     to_curl_test_plan,
+    to_github_annotations,
+    to_html,
+    to_junit,
     to_markdown,
     to_sarif,
     to_security_diff_markdown,
 )
 from api_checker.scanner.parser import MAX_SPEC_BYTES
+from api_checker.scanner.rules import RULE_IDS
 
 SEVERITIES = ("critical", "high", "medium", "low", "info")
 SPEC_SUFFIXES = {".json", ".yaml", ".yml"}
@@ -46,7 +51,7 @@ def _build_parser() -> argparse.ArgumentParser:
         choices=SEVERITIES,
         help="hide findings below this severity in reports (for example, medium)",
     )
-    scan.add_argument("--format", choices=("json", "sarif", "md", "curl"), help="report format")
+    scan.add_argument("--format", choices=("json", "sarif", "md", "curl", "html", "github", "junit"), help="report format")
     scan.add_argument("--output", type=Path, help="write the report to a file instead of stdout")
     scan.add_argument(
         "--disable", action="append", default=[], metavar="RULE-ID", help="disable a rule (repeatable)"
@@ -65,6 +70,16 @@ def _build_parser() -> argparse.ArgumentParser:
     diff.add_argument("--output", type=Path)
     diff.add_argument("--disable", action="append", default=[], metavar="RULE-ID")
     return parser
+
+
+def _discover_config(start: Path | None = None) -> Path | None:
+    """Find the nearest project config by walking from CWD toward the root."""
+    current = (start or Path.cwd()).resolve()
+    for directory in (current, *current.parents):
+        candidate = directory / ".openapi-sec-lint.toml"
+        if candidate.is_file():
+            return candidate
+    return None
 
 
 def _config_options(path: Path | None) -> dict[str, Any]:
@@ -103,6 +118,15 @@ def _input_paths(values: list[str]) -> list[Path]:
         else:
             paths.append(path)
     return paths
+
+
+def _path_is_ignored(path: str, patterns: list[str]) -> bool:
+    value = Path(path)
+    try:
+        candidate = value.resolve().relative_to(Path.cwd().resolve()).as_posix()
+    except ValueError:
+        candidate = value.as_posix()
+    return any(fnmatch.fnmatchcase(candidate, pattern) or fnmatch.fnmatchcase(value.name, pattern) for pattern in patterns)
 
 
 def _baseline_fingerprints(path: Path | None) -> tuple[set[str], dict[str, set[str]]]:
@@ -258,6 +282,12 @@ def _run_diff(old_path: str, new_path: str, output_format: str, disabled: set[st
 
 
 def _serialize(scans: list[dict[str, Any]], output_format: str) -> str:
+    if output_format == "html":
+        return to_html(scans)
+    if output_format == "junit":
+        return to_junit(scans)
+    if output_format == "github":
+        return to_github_annotations(scans)
     if output_format == "curl":
         return "\n".join(to_curl_test_plan(scan) for scan in scans)
     if output_format == "sarif":
@@ -289,15 +319,23 @@ def main(argv: Sequence[str] | None = None) -> int:
             else:
                 sys.stdout.write(rendered + "\n")
             return 0
-        config = _config_options(args.config)
+        config = _config_options(args.config or _discover_config())
         config_disabled = config.get("disable", config.get("disabled_rules", []))
         if not isinstance(config_disabled, list) or not all(isinstance(item, str) for item in config_disabled):
             raise ValueError("Config 'disable' must be a list of rule IDs.")
         disabled = set(config_disabled)
         disabled.update(rule.strip() for value in args.disable for rule in value.split(",") if rule.strip())
         output_format = args.format or config.get("format", "json")
-        if output_format not in {"json", "sarif", "md", "curl"}:
-            raise ValueError("Config format must be json, sarif, md, or curl.")
+        if output_format not in {"json", "sarif", "md", "curl", "html", "github", "junit"}:
+            raise ValueError("Config format must be json, sarif, md, curl, html, github, or junit.")
+        path_ignores = config.get("path_ignores", [])
+        if not isinstance(path_ignores, list) or not all(isinstance(item, str) for item in path_ignores):
+            raise ValueError("Config 'path_ignores' must be a list of glob patterns.")
+        rule_severity = config.get("rule_severity", {})
+        if not isinstance(rule_severity, dict) or any(
+            rule not in RULE_IDS or severity not in SEVERITIES for rule, severity in rule_severity.items()
+        ):
+            raise ValueError("Config 'rule_severity' must map known rule IDs to supported severities.")
         fail_on = args.fail_on or config.get("fail_on")
         if fail_on is not None and fail_on not in SEVERITIES:
             raise ValueError("Config fail_on must be a supported severity.")
@@ -309,11 +347,17 @@ def main(argv: Sequence[str] | None = None) -> int:
         stdin_count = args.spec.count("-")
         if stdin_count > 1 or (stdin_count and len(args.spec) != 1):
             raise ValueError("Standard input can be used as the only input, once.")
-        input_values = ["-"] if stdin_count else [str(path) for path in input_paths]
+        input_values = ["-"] if stdin_count else [str(path) for path in input_paths if not _path_is_ignored(str(path), path_ignores)]
         if not input_values:
-            raise ValueError("No JSON or YAML specification files were found.")
+            raise ValueError("No JSON or YAML specifications remain after applying path_ignores.")
 
         scans = [_scan_one(value, disabled) for value in input_values]
+        if rule_severity:
+            for scan in scans:
+                for finding in scan["findings"]:
+                    if finding["rule_id"] in rule_severity:
+                        finding["severity"] = rule_severity[finding["rule_id"]]
+                scan["summary"] = _recount(scan["findings"], scan["summary"])
         if min_severity:
             threshold = SEVERITIES.index(min_severity)
             for scan in scans:

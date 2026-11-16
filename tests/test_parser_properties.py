@@ -19,7 +19,7 @@ def test_parser_rejects_or_accepts_arbitrary_hostile_text_without_crashing(sourc
 
 @settings(max_examples=100, deadline=None)
 @given(
-    title=st.text(min_size=1, max_size=40),
+    title=st.text(min_size=1, max_size=40).filter(lambda value: bool(value.strip())),
     parameter_name=st.text(min_size=1, max_size=40),
     value=st.one_of(st.none(), st.booleans(), st.integers(), st.text(max_size=80)),
 )

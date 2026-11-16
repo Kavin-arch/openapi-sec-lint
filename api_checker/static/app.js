@@ -132,7 +132,7 @@ function renderScan(scan) {
 
   document.querySelector('#export-links').hidden = scan.status !== 'completed';
   document.querySelector('#export-links').innerHTML = scan.status === 'completed'
-    ? ['json', 'sarif', 'md'].map((format) => `<a href="/api/v1/scans/${encodeURIComponent(scan.id)}/export?format=${format}" download>Download ${format.toUpperCase()}</a>`).join('')
+    ? ['json', 'sarif', 'md', 'html', 'junit'].map((format) => `<a href="/api/v1/scans/${encodeURIComponent(scan.id)}/export?format=${format}" download>Download ${format.toUpperCase()}</a>`).join('')
     : '';
   const findings = scan.findings || [];
   document.querySelector('#finding-controls').hidden = findings.length === 0;
@@ -170,21 +170,28 @@ function renderFindings(findings) {
   findingPage = Math.max(0, Math.min(findingPage, pageCount - 1));
   const start = findingPage * FINDINGS_PER_PAGE;
   const pageFindings = filtered.slice(start, start + FINDINGS_PER_PAGE);
-  findingsList.innerHTML = pageFindings.map((finding) => {
+  const groups = new Map();
+  for (const finding of pageFindings) {
+    const key = finding.rule_id || 'Other';
+    groups.set(key, [...(groups.get(key) || []), finding]);
+  }
+  findingsList.innerHTML = [...groups].map(([ruleId, group]) => `<details class="rule-group" open><summary>${escapeHtml(ruleId)} <span>${group.length} finding${group.length === 1 ? '' : 's'}</span></summary>${group.map((finding) => {
     const ops = finding.affected_operations?.length ? `<div class="operations">${finding.affected_operations.map(escapeHtml).join('<br>')}</div>` : '';
     const evidence = finding.evidence || {};
     const details = evidence.servers || evidence.schema_fields || evidence.fields || evidence.issues || evidence.parameters;
     const evidenceHtml = details?.length ? `<div class="operations">${details.map(escapeHtml).join('<br>')}</div>` : '';
     const pointers = evidence.json_pointers;
     const pointerHtml = pointers?.length ? `<div class="operations pointer-list"><strong>Specification locations</strong><br>${pointers.map(escapeHtml).join('<br>')}</div>` : '';
+    const excerpt = evidence.locations?.[0]?.source_excerpt;
+    const sourceHtml = excerpt?.lines?.length ? `<div class="source-viewer"><strong>Line ${escapeHtml(String(excerpt.start_line))}</strong><pre>${excerpt.lines.map((line) => `<span class="source-line flagged"><b>${escapeHtml(String(line.number))}</b>${escapeHtml(line.text)}</span>`).join('')}</pre></div>` : '';
     let truncation = '';
     if (evidence.truncated) {
       const shown = Math.min(Number(evidence.total_matches) || 100, pointers?.length || details?.length || 100);
       const total = Number(evidence.total_matches);
       truncation = `<span class="truncation-badge">${total > 0 ? `Showing ${shown} of ${total} affected entries` : `Showing the first ${shown} affected entries`}</span>`;
     }
-    return `<article class="finding"><div class="finding-top"><span class="severity ${escapeHtml(finding.severity)}">${escapeHtml(finding.severity)}</span><span class="rule-id">${escapeHtml(finding.rule_id)}</span><span class="confidence">${escapeHtml(finding.confidence)} confidence</span></div><h3>${escapeHtml(finding.title)}</h3><p>${escapeHtml(finding.summary)}</p><p><strong>Potential impact:</strong> ${escapeHtml(finding.impact)}</p><p class="remediation"><strong>Suggested review:</strong> ${escapeHtml(finding.remediation)}</p>${truncation}${ops}${evidenceHtml}${pointerHtml}</article>`;
-  }).join('');
+    return `<article class="finding"><div class="finding-top"><span class="severity ${escapeHtml(finding.severity)}">${escapeHtml(finding.severity)}</span><span class="confidence">${escapeHtml(finding.confidence)} confidence</span></div><h3>${escapeHtml(finding.title)}</h3><p>${escapeHtml(finding.summary)}</p><p><strong>Potential impact:</strong> ${escapeHtml(finding.impact)}</p><p class="remediation"><strong>Suggested review:</strong> ${escapeHtml(finding.remediation)}</p>${truncation}${ops}${evidenceHtml}${pointerHtml}${sourceHtml}</article>`;
+  }).join('')}</details>`).join('');
   pagination.hidden = filtered.length <= FINDINGS_PER_PAGE;
   pagination.replaceChildren();
   if (filtered.length > FINDINGS_PER_PAGE) {
@@ -217,11 +224,24 @@ async function refreshHistory() {
     const payload = await response.json();
     if (!payload.items.length) {
       historyList.innerHTML = '<div class="empty-state">Your scan reports will appear here.</div>';
+      for (const id of ['compare-old', 'compare-new']) {
+        const select = document.querySelector(`#${id}`);
+        select.replaceChildren();
+        select.disabled = true;
+      }
       return;
     }
     historyList.innerHTML = payload.items.map((scan) => `<div class="history-row"><button class="history-open" type="button" data-id="${escapeHtml(scan.id)}"><span class="history-name"><strong>${escapeHtml(scan.name)}</strong><small>${escapeHtml(scan.target_url)} · ${escapeHtml(new Date(scan.created_at).toLocaleString())}</small></span><span class="history-count">${escapeHtml(String(scan.summary?.findings ?? '—'))} findings</span><span class="history-status">${escapeHtml(scan.status)}</span></button><button class="history-delete" type="button" data-id="${escapeHtml(scan.id)}" aria-label="Delete ${escapeHtml(scan.name)}" title="${['queued', 'running'].includes(scan.status) ? 'Cancel and delete this scan' : 'Delete this scan'}">${['queued', 'running'].includes(scan.status) ? 'Cancel' : 'Delete'}</button></div>`).join('');
     historyList.querySelectorAll('.history-open').forEach((button) => button.addEventListener('click', () => loadScan(button.dataset.id)));
     historyList.querySelectorAll('.history-delete').forEach((button) => button.addEventListener('click', () => deleteHistoryItem(button.dataset.id)));
+    const completed = payload.items.filter((scan) => scan.status === 'completed');
+    for (const id of ['compare-old', 'compare-new']) {
+      const select = document.querySelector(`#${id}`);
+      const previous = select.value;
+      select.innerHTML = completed.map((scan) => `<option value="${escapeHtml(scan.id)}">${escapeHtml(scan.name)} · ${escapeHtml(new Date(scan.created_at).toLocaleString())}</option>`).join('');
+      if (completed.some((scan) => scan.id === previous)) select.value = previous;
+      select.disabled = completed.length < 2;
+    }
   } catch { /* Keep the current history visible if the network is temporarily unavailable. */ }
 }
 
@@ -257,6 +277,17 @@ function escapeHtml(value) {
 }
 
 document.querySelector('#refresh-button').addEventListener('click', refreshHistory);
+document.querySelector('#compare-button').addEventListener('click', async () => {
+  const oldId = document.querySelector('#compare-old').value;
+  const newId = document.querySelector('#compare-new').value;
+  const output = document.querySelector('#compare-results');
+  if (!oldId || !newId || oldId === newId) { output.textContent = 'Choose two different completed scans.'; return; }
+  const response = await fetch(`/api/v1/scans/diff?old_id=${encodeURIComponent(oldId)}&new_id=${encodeURIComponent(newId)}`);
+  const data = await response.json();
+  if (!response.ok) { output.textContent = formatApiError(data.detail); return; }
+  output.innerHTML = `<p>${data.summary.added} added · ${data.summary.removed} removed</p><div class="diff-columns"><div><strong>Added</strong>${data.added_findings.map((item) => `<div>${escapeHtml(item.rule_id)} · ${escapeHtml(item.title)}</div>`).join('') || '<div>None</div>'}</div><div><strong>Removed</strong>${data.removed_findings.map((item) => `<div>${escapeHtml(item.rule_id)} · ${escapeHtml(item.title)}</div>`).join('') || '<div>None</div>'}</div></div>`;
+});
+document.querySelectorAll('#compare-old, #compare-new').forEach((select) => select.addEventListener('change', () => { document.querySelector('#compare-results').replaceChildren(); }));
 refreshHistory();
 loadCheckCount();
 

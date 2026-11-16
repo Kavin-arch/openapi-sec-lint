@@ -1,0 +1,35 @@
+name: Bug report
+description: Report a reproducible problem in the CLI, scanner, or local UI.
+title: "[Bug]: "
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: Please do not include API credentials, customer data, or private specifications.
+  - type: input
+    id: version
+    attributes:
+      label: openapi-sec-lint version
+      placeholder: 0.3.0
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Steps to reproduce
+      description: Include a minimal, sanitized OpenAPI fragment if relevant.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected and actual behavior
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: Operating system and Python version.
+    validations:
+      required: true
